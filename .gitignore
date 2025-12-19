@@ -1,0 +1,47 @@
+# Go build output
+/bin/
+/Darwin/
+/Linux/
+/Windows/
+
+# Go test output
+/test/
+/test.exe
+/test.bin
+
+# Go coverage output
+/coverage.txt
+
+# Go module download cache
+/pkg/mod/
+
+# ONNX Runtime and other CGO libraries
+/models/
+
+# IDE files
+.idea/
+.vscode/
+
+# Build artifacts
+*.o
+*.a
+
+# Archive files
+*.zip
+*.tar.gz
+
+# Log files
+*.log
+
+# Temporary files
+*.tmp
+*.swp
+
+# Environment files
+.env
+.venv/
+
+# Screenshots
+*.png
+*.jpg
+*.jpeg
