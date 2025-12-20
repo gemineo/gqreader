@@ -6,7 +6,9 @@ GOBUILD = $(GOCMD) build
 GOTEST = $(GOCMD) test
 GOCLEAN = $(GOCMD) clean
 GOMOD = $(GOCMD) mod
+BIN_DIR = bin
 BINARY_NAME = qrdetect
+BINARY_PATH = $(BIN_DIR)/$(BINARY_NAME)
 
 # Python for model export
 PYTHON = python3
@@ -70,14 +72,16 @@ setup-python:
 # Build the CLI (development mode, loads model from file)
 build:
 	@echo "==> Building $(BINARY_NAME) (dev mode)..."
-	$(GOBUILD) -o $(BINARY_NAME) ./cmd/qrdetect
-	@echo "==> Built $(BINARY_NAME)"
+	@mkdir -p $(BIN_DIR)
+	$(GOBUILD) -o $(BINARY_PATH) ./cmd/qrdetect
+	@echo "==> Built $(BINARY_PATH)"
 
 # Build with embedded model (requires model to exist)
 build-embedded: $(MODEL_ONNX)
 	@echo "==> Building $(BINARY_NAME) with embedded model..."
-	$(GOBUILD) -tags embed_model -o $(BINARY_NAME) ./cmd/qrdetect
-	@echo "==> Built $(BINARY_NAME) with embedded model"
+	@mkdir -p $(BIN_DIR)
+	$(GOBUILD) -tags embed_model -o $(BINARY_PATH) ./cmd/qrdetect
+	@echo "==> Built $(BINARY_PATH) with embedded model"
 
 # ------------------------------------------------------------------------------
 # Testing
@@ -107,7 +111,7 @@ run-test: build
 		echo "Usage: make run-test INPUT=path/to/image.png [OUTPUT=output.png]"; \
 		exit 1; \
 	fi
-	./$(BINARY_NAME) -input $(INPUT) -output $(or $(OUTPUT),output.png)
+	$(BINARY_PATH) -input $(INPUT) -output $(or $(OUTPUT),output.png)
 
 # Run detection with model path (for development)
 run-dev: build
@@ -115,7 +119,7 @@ run-dev: build
 		echo "Usage: make run-dev INPUT=path/to/image.png [OUTPUT=output.png]"; \
 		exit 1; \
 	fi
-	./$(BINARY_NAME) -model $(MODEL_ONNX) -input $(INPUT) -output $(or $(OUTPUT),output.png)
+	$(BINARY_PATH) -model $(MODEL_ONNX) -input $(INPUT) -output $(or $(OUTPUT),output.png)
 
 # Lint the code
 lint:
@@ -134,13 +138,13 @@ fmt:
 clean:
 	@echo "==> Cleaning build artifacts..."
 	$(GOCLEAN)
-	rm -f $(BINARY_NAME)
+	rm -rf $(BIN_DIR)
 	rm -f coverage.out coverage.html
 	@echo "==> Clean complete"
 
 clean-all: clean
-	@echo "==> Cleaning all artifacts including models..."
-	rm -rf $(MODEL_CACHE_DIR)/*.onnx $(MODEL_CACHE_DIR)/*.pt
+	@echo "==> Cleaning all artifacts including models and Python environment..."
+	rm -rf $(MODEL_CACHE_DIR)
 	rm -rf $(MODEL_EMBED_DIR)/*.onnx
 	rm -rf $(VENV)
 	@echo "==> Full clean complete"
