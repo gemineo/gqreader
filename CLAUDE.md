@@ -154,9 +154,92 @@ Options:
 | Testing/tuning | 3-5 days |
 | **Total** | ~2 weeks |
 
+## IMPORTANT: Model Adaptation for QRdet (Single-Class Detection)
+
+### ⚠️ Critical Observation: QRdet Output Format
+
+**QRdet is single-class detection, NOT multi-class YOLO**
+
+The QRdet model (from GitHub releases v2.0) has been specifically trained for QR code detection only. This affects the ONNX output tensor format:
+
+#### Output Channel Differences
+
+| Model Type | Channel Layout | Total Channels | Notes |
+|-----------|----------------|-----------------|-------|
+| **QRdet (single-class)** | 4 bbox + 1 confidence + 32 masks | **37** | Current implementation |
+| Standard YOLOv8-seg | 4 bbox + 80 COCO classes + 32 masks | **116** | Generic multi-class YOLO |
+| Generic YOLOv8-det | 4 bbox + 80 COCO classes | **84** | Detection only (no segmentation) |
+
+#### QRdet ONNX Model Specifications
+
+```
+Model: qrdet-s.pt → qrdet-s.onnx (from v2.0 releases)
+Input:  [1, 3, 640, 640]
+Output0: [1, 37, 8400]  ← channels are: cx, cy, w, h, confidence, mask_coeff[0-31]
+Output1: [1, 32, 160, 160] ← segmentation prototypes
+
+Confidence is at channel index 4 (not index 5 like multi-class YOLO)
+Mask coefficients occupy channels 5-36 (indices, not 85-116)
+```
+
+### Why This Matters for Future Multi-Format Support
+
+**Current implementation assumes single-class detection.**
+
+If you want to extend QReader to detect **multiple barcode formats** (QR, DataMatrix, Code128, I2of5, etc.), you MUST:
+
+1. **Train or obtain a multi-class model**, NOT use the current QRdet model
+2. **Rewrite the output parsing logic** to handle variable class counts
+3. **Update constants in `pkg/qrdet/types.go`**:
+   - `modelOutputChannels` will be different
+   - Class extraction logic will change
+   - Confidence score indexing will change
+
+### Example: Multi-Class Model Expected Format
+
+If training a YOLOv8-seg model with N barcode classes:
+```
+Output0: [1, 4 + N + 32, 8400]  ← (bbox + N-class scores + mask coefficients)
+
+For N=5 classes (QR, DataMatrix, Code128, I2of5, Codabar):
+Output0: [1, 41, 8400]  ← 4 + 5 + 32
+```
+
+### Migration Path: Single-Class → Multi-Class
+
+To support multiple barcode types, you would need to:
+
+1. **Model selection**:
+   - Option A: Train your own YOLOv8-seg model with multiple barcode classes
+   - Option B: Use separate single-class models per format (current approach, less efficient)
+
+2. **Code refactoring** (estimate: 1-2 days):
+   - Parameterize `modelOutputChannels` and `modelNumClasses`
+   - Update `parseOutput0()` to dynamically extract class scores
+   - Update `buildDetection()` to populate class information
+   - Update domain types (`Detection` struct) to include detected class
+
+3. **Post-processing adjustments**:
+   - NMS may need class-aware filtering (current: agnostic NMS only)
+   - Confidence thresholds may vary per class
+   - ROI extraction logic remains the same
+
+### Recommendations for Future Development
+
+**If staying QR-only**:
+- Current implementation is optimal and efficient
+- No changes needed
+
+**If planning multi-format support**:
+- Document this constraint early
+- Plan model retraining or multi-model strategy
+- Keep `pkg/qrdet/` modular to allow class configuration
+- Consider versioning the Go API separately from model format
+
 ## Critical Success Factors
 
 1. **Exact parameter preservation**: Maintain same kernel sizes, thresholds, and scaling factors as Python version
 2. **Image variant equivalence**: Generated variants must match Python output for regression prevention
 3. **Model export validation**: Verify ONNX model produces same detections as PyTorch original
 4. **Post-processing fidelity**: NMS and bbox handling must match QRdet behavior
+5. **Model format awareness**: Keep track of single-class vs multi-class assumptions for future extensibility

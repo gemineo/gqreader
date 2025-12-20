@@ -1,4 +1,5 @@
-# Go build output
+# Binaries
+qrdetect
 /bin/
 /Darwin/
 /Linux/
@@ -8,15 +9,21 @@
 /test/
 /test.exe
 /test.bin
-
-# Go coverage output
-/coverage.txt
+coverage.out
+coverage.html
 
 # Go module download cache
 /pkg/mod/
 
-# ONNX Runtime and other CGO libraries
-/models/
+# Models (too large for git)
+models/*.pt
+models/*.onnx
+pkg/qrdet/models/*.onnx
+
+# ONNX Runtime shared libraries
+*.dylib
+*.so
+*.dll
 
 # IDE files
 .idea/
@@ -25,6 +32,8 @@
 # Build artifacts
 *.o
 *.a
+*.exe
+*.test
 
 # Archive files
 *.zip
@@ -36,12 +45,18 @@
 # Temporary files
 *.tmp
 *.swp
+*.swo
+*~
 
 # Environment files
 .env
 .venv/
+__pycache__/
+*.pyc
 
-# Screenshots
-*.png
-*.jpg
-*.jpeg
+# Output images (except testdata)
+output.png
+/output/
+
+# macOS
+.DS_Store

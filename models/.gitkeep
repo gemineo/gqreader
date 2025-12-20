@@ -1,0 +1,8 @@
+# This directory contains ONNX model files.
+# Run 'make model' to download and export the QRdet model.
+#
+# Files:
+#   - qrdet-s.pt   : PyTorch model (downloaded from GitHub releases)
+#   - qrdet-s.onnx : ONNX model (exported from PyTorch)
+#
+# These files are not committed to git due to their size (~20-50MB).

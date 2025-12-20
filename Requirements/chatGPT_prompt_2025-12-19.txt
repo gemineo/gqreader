@@ -1,0 +1,157 @@
+Prompt proposé pour Claude.code (anglais, haute précision)
+
+You are an expert senior software engineer with strong experience in computer vision, Go (Golang), C/C++, CGO, and ML model deployment.
+
+I am working on a codebase adaptation project with the following goals and constraints. Read everything carefully before proposing or modifying any code.
+
+⸻
+
+1. Project goal (high-level)
+
+The objective is to port and integrate a QR / barcode detection pipeline originally relying on Python + PyTorch + YOLOv8, into a native Go-based project called QReader, with the following priorities:
+	•	No Python runtime dependency at execution time
+	•	No Docker-based inference services
+	•	Local execution only
+	•	Focus on maintainability, readability, and long-term sustainability
+	•	Acceptable use of CGO when strictly necessary
+	•	Prefer clear architecture over premature optimization
+
+This project is a conversion and integration, not a quick hack.
+
+⸻
+
+2. Functional scope
+
+The system must:
+	•	Detect QR codes and barcodes (QR Code, DataMatrix, Interleaved 2 of 5)
+	•	Use a pre-trained YOLOv8-based detector (already trained, not to be retrained)
+	•	Run inference locally
+	•	Output bounding boxes and detection metadata
+	•	Feed the detection results into an existing Go pipeline for post-processing
+
+⸻
+
+3. ML / inference constraints
+
+The original project uses:
+	•	PyTorch
+	•	YOLOv8
+	•	A trained .pt model
+
+Target state:
+	•	Convert the PyTorch model to ONNX
+	•	Use ONNX Runtime for inference
+	•	Integrate inference into Go via:
+	•	Either official ONNX Runtime Go bindings
+	•	Or a minimal C/C++ wrapper exposed via CGO
+
+Important clarifications:
+	•	ONNX Runtime is used only as an inference engine
+	•	No training, no gradient computation
+	•	The model is treated as an immutable artifact
+	•	The Go code must not “know” PyTorch
+
+⸻
+
+4. Architectural expectations (very important)
+
+I want a clean separation of concerns:
+	•	model/
+Model loading, inference execution, tensor management
+	•	vision/
+Image preprocessing (resize, normalization, letterboxing, etc.)
+	•	postprocess/
+YOLO output decoding, NMS, confidence thresholds
+	•	domain/
+Domain-level concepts (QRCode, Barcode, BoundingBox, etc.)
+	•	cmd/ or main/
+Wiring and orchestration only
+
+Do not mix:
+	•	image preprocessing with inference
+	•	inference with business logic
+	•	Go domain types with raw ONNX tensors
+
+⸻
+
+5. Code quality requirements (strict)
+
+This is a hard requirement.
+	•	Code must be:
+	•	Readable
+	•	Explicit
+	•	Boring (in a good way)
+	•	No clever tricks
+	•	No magic constants without comments
+	•	Functions should be short and single-purpose
+	•	Every exported symbol must have a doc comment
+	•	Errors must be explicit and wrapped with context
+	•	No silent fallback behavior
+
+Assume this code will be maintained by humans for years.
+
+⸻
+
+6. CGO usage rules
+
+CGO is acceptable, but:
+	•	Keep the C/C++ surface minimal
+	•	Prefer “thin wrapper” style
+	•	All memory ownership rules must be explicit
+	•	No hidden global state
+	•	Go must remain the orchestration layer
+
+If CGO is not strictly necessary for a given part, prefer pure Go.
+
+⸻
+
+7. What I expect from you (Claude)
+
+I want you to:
+	1.	Propose a clear target architecture
+	2.	Identify risky or unclear areas early
+	3.	Explain trade-offs when they exist
+	4.	Generate code incrementally
+	5.	Prefer correctness and clarity over performance
+	6.	Ask clarification questions only if truly blocking
+
+When generating code:
+	•	Prefer full files over snippets
+	•	Use realistic package names
+	•	Add comments explaining why, not just what
+
+⸻
+
+8. What NOT to do
+	•	Do not assume GPU availability
+	•	Do not introduce Python, subprocess calls, or Docker
+	•	Do not over-engineer abstractions
+	•	Do not hide complexity behind “utils” packages
+	•	Do not generate code that cannot realistically compile
+
+⸻
+
+9. Context about me (to guide tone and depth)
+	•	I am a professional developer
+	•	I am comfortable with Go, C, and system-level concepts
+	•	You do not need to oversimplify
+	•	Precision is preferred over verbosity
+	•	You can assume I will read all the code carefully
+
+⸻
+
+10. First task
+
+Start by:
+	1.	Summarizing your understanding of the project in your own words
+	2.	Proposing a concrete directory structure
+	3.	Identifying the minimum viable path to get first inference running in Go
+	4.	Highlighting the main technical risks
+
+Do not generate code yet unless explicitly asked.
+
+⸻
+
+If something is ambiguous, state the assumption clearly instead of guessing.
+
+Take your time. Quality over speed.
