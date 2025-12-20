@@ -2,6 +2,7 @@
 package mathutil
 
 import (
+	"math"
 	"sort"
 
 	"github.com/mhey01/qreader/internal/geometry"
@@ -146,20 +147,8 @@ func gaussianDecay(iou, sigma float32) float32 {
 
 // exp32 computes exp(x) for float32.
 func exp32(x float32) float32 {
-	// Use a simple approximation for small values
-	// For better accuracy, use math.Exp with conversion
-	if x > 0 {
-		return 1
-	}
-	if x < -10 {
-		return 0
-	}
-
-	// Taylor series approximation: e^x ≈ 1 + x + x²/2 + x³/6 + x⁴/24
-	x2 := x * x
-	x3 := x2 * x
-	x4 := x3 * x
-	return 1 + x + x2/2 + x3/6 + x4/24
+	// Use the standard library math.Exp for accuracy
+	return float32(math.Exp(float64(x)))
 }
 
 // Sigmoid applies the sigmoid function: 1 / (1 + exp(-x))
