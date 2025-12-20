@@ -2,6 +2,7 @@ package qrdet
 
 import (
 	"fmt"
+	"os"
 	"runtime"
 
 	ort "github.com/yalue/onnxruntime_go"
@@ -254,7 +255,38 @@ func initONNXRuntime() error {
 	}
 
 	// Set the shared library path based on the platform
-	// Users should set this environment variable or install ONNX Runtime system-wide
+	// On macOS, ONNX Runtime is typically installed via Homebrew
+	if runtime.GOOS == "darwin" {
+		// Try Homebrew paths (ARM and Intel)
+		paths := []string{
+			"/opt/homebrew/lib/libonnxruntime.dylib",   // ARM (Apple Silicon)
+			"/usr/local/lib/libonnxruntime.dylib",      // Intel
+			"/opt/homebrew/lib/libonnxruntime.1.dylib", // Versioned ARM
+			"/usr/local/lib/libonnxruntime.1.dylib",    // Versioned Intel
+		}
+		for _, path := range paths {
+			if _, err := os.Stat(path); err == nil {
+				ort.SetSharedLibraryPath(path)
+				break
+			}
+		}
+	} else if runtime.GOOS == "linux" {
+		// On Linux, try standard library paths
+		paths := []string{
+			"/usr/lib/libonnxruntime.so",
+			"/usr/local/lib/libonnxruntime.so",
+			"/usr/lib/x86_64-linux-gnu/libonnxruntime.so",
+			"libonnxruntime.so", // Try system path
+		}
+		for _, path := range paths {
+			if _, err := os.Stat(path); err == nil {
+				ort.SetSharedLibraryPath(path)
+				break
+			}
+		}
+	}
+	// On Windows, the default "onnxruntime.dll" should work
+
 	if err := ort.InitializeEnvironment(); err != nil {
 		return fmt.Errorf("failed to initialize ONNX Runtime environment: %w", err)
 	}
