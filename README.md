@@ -1,6 +1,13 @@
-# QReader - Go Implementation
+# gQReader - Go QR Code Detection Library
 
-A native Go port of the Python QReader library for detecting and reading QR codes without Docker or Python runtime dependencies.
+[![Go Reference](https://pkg.go.dev/badge/github.com/gemineo/gqreader.svg)](https://pkg.go.dev/github.com/gemineo/gqreader)
+[![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL%203.0-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
+
+A native Go port of the Python [QReader](https://github.com/Eric-Canas/QReader/) library for high-accuracy QR code detection using YOLOv8, without Docker or Python runtime dependencies.
+
+> **Current Version**: v0.x (API in active development)
+>
+> The API is currently in v0.x phase and may undergo breaking changes. We recommend using accessor methods (`det.GetConfidence()`) instead of direct field access for future compatibility. See the [API Migration Guide](#api-migration-guide) below.
 
 ## What is QReader?
 
@@ -30,8 +37,8 @@ Before you begin, ensure you have:
 
 ```bash
 cd /path/to/your/projects
-git clone <repository-url> QReader_PoC
-cd QReader_PoC
+git clone https://github.com/gemineo/gqreader.git
+cd gqreader
 ```
 
 #### 2. Install System Dependencies
@@ -369,7 +376,9 @@ See `CLAUDE.md` for technical roadmap and extension path.
 
 ## Integration as a Library
 
-To use QReader as a library in your Go code:
+To use gQReader as a library in your Go code:
+
+### Basic Usage (Simple)
 
 ```go
 package main
@@ -377,8 +386,7 @@ package main
 import (
     "fmt"
     "log"
-    "gocv.io/x/gocv"
-    "github.com/mhey01/qreader/pkg/qrdet"
+    "github.com/gemineo/gqreader/pkg/qrdet"
 )
 
 func main() {
@@ -389,15 +397,8 @@ func main() {
     }
     defer detector.Close()
 
-    // Load image
-    img := gocv.IMRead("photo.jpg", gocv.IMReadColor)
-    if img.Empty() {
-        log.Fatal("Failed to load image")
-    }
-    defer img.Close()
-
-    // Run detection
-    detections, err := detector.Detect(img)
+    // Detect QR codes directly from a file
+    detections, err := detector.DetectFile("photo.jpg")
     if err != nil {
         log.Fatal(err)
     }
@@ -405,14 +406,78 @@ func main() {
     // Process results
     for i, det := range detections {
         fmt.Printf("QR Code %d:\n", i+1)
-        fmt.Printf("  Confidence: %.2f%%\n", det.Confidence*100)
-        fmt.Printf("  Bounding box: [%.0f, %.0f, %.0f, %.0f]\n",
-            det.BBoxXYXY[0], det.BBoxXYXY[1],
-            det.BBoxXYXY[2], det.BBoxXYXY[3])
+        fmt.Printf("  Confidence: %.2f%%\n", det.GetConfidence()*100)
 
-        // Access other fields
-        fmt.Printf("  Center: (%.0f, %.0f)\n", det.CenterXY[0], det.CenterXY[1])
-        fmt.Printf("  Quad corners: %v\n", det.QuadXY)
+        bbox := det.BBox()
+        fmt.Printf("  Bounding box: [%.0f, %.0f, %.0f, %.0f]\n",
+            bbox[0], bbox[1], bbox[2], bbox[3])
+
+        center := det.Center()
+        fmt.Printf("  Center: (%.0f, %.0f)\n", center[0], center[1])
+
+        fmt.Printf("  Area: %.0f px²\n", det.Area())
+        fmt.Printf("  Is square: %v\n", det.IsSquare())
+    }
+}
+```
+
+### Advanced Usage (ImageSource API)
+
+```go
+package main
+
+import (
+    "fmt"
+    "log"
+    "os"
+    "github.com/gemineo/gqreader/pkg/qrdet"
+)
+
+func main() {
+    // Create detector with custom config
+    config := qrdet.DefaultConfig().
+        WithConfidence(0.6).
+        WithNMSIoU(0.3)
+
+    detector, err := qrdet.NewDetector(config)
+    if err != nil {
+        log.Fatal(err)
+    }
+    defer detector.Close()
+
+    // Option 1: Load from file
+    img, err := qrdet.NewImageFromFile("photo.jpg")
+    if err != nil {
+        log.Fatal(err)
+    }
+    defer img.Close()
+
+    // Option 2: Load from memory (bytes)
+    // data, _ := os.ReadFile("photo.jpg")
+    // img, err := qrdet.NewImageFromBytes(data, qrdet.ImageFormatAuto)
+
+    // Run detection
+    detections, err := detector.Detect(img)
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    // Process results with accessor methods
+    for i, det := range detections {
+        fmt.Printf("QR Code %d:\n", i+1)
+
+        // Use accessor methods (recommended)
+        fmt.Printf("  Confidence: %.2f%%\n", det.GetConfidence()*100)
+        fmt.Printf("  Bounding box: %v\n", det.BBox())
+        fmt.Printf("  Center: %v\n", det.Center())
+        fmt.Printf("  Size: %v pixels\n", det.Size())
+        fmt.Printf("  Area: %.0f px²\n", det.Area())
+        fmt.Printf("  Aspect ratio: %.2f\n", det.AspectRatio())
+        fmt.Printf("  Quad corners: %v\n", det.Quad())
+
+        // Access segmentation polygon
+        polygon := det.Polygon()
+        fmt.Printf("  Polygon vertices: %d\n", len(polygon))
     }
 }
 ```
@@ -435,16 +500,67 @@ For questions or issues:
 3. Review `pkg/qrdet/MODEL_FORMAT.md` for model details
 4. Open an issue in the repository
 
+## API Migration Guide
+
+gQReader is currently in v0.x phase. The API has been redesigned to remove CGO types from the public interface and provide better forward compatibility.
+
+### Recommended API (v0.6+)
+
+```go
+// ✅ Use ImageSource abstraction (no GoCV dependency)
+img, _ := qrdet.NewImageFromFile("photo.jpg")
+defer img.Close()
+detections, _ := detector.Detect(img)
+
+// ✅ Use accessor methods (future-proof)
+conf := det.GetConfidence()
+bbox := det.BBox()
+center := det.Center()
+area := det.Area()
+```
+
+### Legacy API (still works in v0.x, will be removed in v1.0)
+
+```go
+// ⚠️ Deprecated: Direct GoCV usage (requires GoCV import)
+mat := gocv.IMRead("photo.jpg", gocv.IMReadColor)
+detections, _ := detector.Detect(qrdet.NewImageFromMat(mat))
+
+// ⚠️ Deprecated: Direct field access
+conf := det.Confidence        // Use det.GetConfidence() instead
+bbox := det.BBoxXYXY          // Use det.BBox() instead
+center := det.CenterXY        // Use det.Center() instead
+```
+
+### Migration Timeline
+
+- **v0.x** (current): Both old and new API work. Direct field access is deprecated but functional.
+- **v1.0** (planned): Only accessor methods remain. Direct field access removed.
+
+We recommend migrating to the new API now to avoid breaking changes in v1.0.
+
 ## Changelog
 
-### Version 1.0.0 (Current)
+### Version 0.6.0 (2025-12-20) - Current
 
+**Breaking Changes:**
+- Module path changed from `github.com/mhey01/qreader` to `github.com/gemineo/gqreader`
+- `Detector.Detect()` now accepts `*ImageSource` instead of `gocv.Mat`
+
+**New Features:**
+- ✅ ImageSource abstraction (eliminates CGO types from public API)
+- ✅ Detection accessor methods (`GetConfidence()`, `BBox()`, `Area()`, etc.)
+- ✅ Support for loading images from bytes (`NewImageFromBytes`)
+- ✅ Support for raw pixel data (`NewImageFromRaw`)
+- ✅ New utility methods: `Area()`, `AspectRatio()`, `IsSquare()`
+
+**Technical:**
 - ✅ QR code detection via YOLOv8 segmentation
 - ✅ ONNX Runtime integration
 - ✅ CLI tool with PNG export
 - ✅ Bounding box and quadrilateral extraction
-- ✅ Development and production build modes
-- ✅ Full documentation
+- ✅ Full segmentation polygon support
+- ✅ Comprehensive godoc documentation
 
 ---
 

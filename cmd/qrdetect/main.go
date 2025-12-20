@@ -21,7 +21,7 @@ import (
 
 	"gocv.io/x/gocv"
 
-	"github.com/mhey01/qreader/pkg/qrdet"
+	"github.com/gemineo/gqreader/pkg/qrdet"
 )
 
 func main() {
@@ -104,16 +104,20 @@ func main() {
 		fmt.Printf("Loading image: %s\n", *inputPath)
 	}
 
-	img := gocv.IMRead(*inputPath, gocv.IMReadColor)
-	if img.Empty() {
+	// Load the image using GoCV (we need the Mat for drawing later)
+	mat := gocv.IMRead(*inputPath, gocv.IMReadColor)
+	if mat.Empty() {
 		fmt.Fprintf(os.Stderr, "Error: failed to load image: %s\n", *inputPath)
 		os.Exit(1)
 	}
-	defer img.Close()
+	defer mat.Close()
 
 	if *verbose {
-		fmt.Printf("Image size: %dx%d\n", img.Cols(), img.Rows())
+		fmt.Printf("Image size: %dx%d\n", mat.Cols(), mat.Rows())
 	}
+
+	// Create ImageSource for detection (no-copy wrapper)
+	img := qrdet.NewImageFromMat(mat)
 
 	// Run detection
 	if *verbose {
@@ -134,13 +138,13 @@ func main() {
 		outputJSON(detections)
 	} else {
 		// Image output mode
-		drawDetections(&img, detections)
+		drawDetections(&mat, detections)
 
 		if *verbose {
 			fmt.Printf("Saving annotated image: %s\n", *outputPath)
 		}
 
-		if !gocv.IMWrite(*outputPath, img) {
+		if !gocv.IMWrite(*outputPath, mat) {
 			fmt.Fprintf(os.Stderr, "Error: failed to save image: %s\n", *outputPath)
 			os.Exit(1)
 		}

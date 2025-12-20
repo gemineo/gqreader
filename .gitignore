@@ -1,62 +1,47 @@
 # Binaries
-bin/qrdetect
-/bin/
-/Darwin/
-/Linux/
-/Windows/
-
-# Go test output
-/test/
-/test.exe
-/test.bin
-coverage.out
-coverage.html
-
-# Go module download cache
-/pkg/mod/
-
-# Models (too large for git)
-models/*.pt
-models/*.onnx
-pkg/qrdet/models/*.onnx
-
-# ONNX Runtime shared libraries
-*.dylib
-*.so
-*.dll
-
-# IDE files
-.idea/
-.vscode/
-
-# Build artifacts
-*.o
-*.a
+bin/
 *.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+qrdetect
+
+# Test binary, built with `go test -c`
 *.test
 
-# Archive files
-*.zip
-*.tar.gz
+# Output of the go coverage tool
+*.out
+coverage.html
+coverage.out
 
-# Log files
-*.log
+# Go workspace file
+go.work
+go.work.sum
 
-# Temporary files
-*.tmp
+# IDE
+.idea/
+.vscode/
 *.swp
 *.swo
 *~
 
-# Environment files
-.env
+# Python (for model export scripts)
 .venv/
 __pycache__/
-*.pyc
+*.py[cod]
+*$py.class
+*.egg-info/
 
-# Output images (except testdata)
-output.png
-/output/
+# Models (too large for git, should be downloaded or generated)
+models/
+pkg/qrdet/models/
 
-# macOS
+# OS
 .DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.bak
+*.log

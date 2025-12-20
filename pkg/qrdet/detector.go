@@ -2,8 +2,6 @@ package qrdet
 
 import (
 	"fmt"
-
-	"gocv.io/x/gocv"
 )
 
 // Detector is the main interface for QR code detection.
@@ -82,25 +80,35 @@ func newDetectorFromData(modelData []byte, config Config) (*Detector, error) {
 // Detect runs QR code detection on an image.
 // Returns a slice of Detection structs, one for each detected QR code.
 //
-// The input image should be a valid gocv.Mat in BGR format (standard OpenCV format).
-// Images of any size are accepted; they will be letterboxed to the model input size.
+// The input must be a valid ImageSource created via NewImageFromFile, NewImageFromBytes,
+// or NewImageFromRaw. Images of any size are accepted; they will be letterboxed to the
+// model input size.
 //
 // Example:
 //
-//	img := gocv.IMRead("photo.jpg", gocv.IMReadColor)
+//	img, err := qrdet.NewImageFromFile("photo.jpg")
+//	if err != nil {
+//	    log.Fatal(err)
+//	}
 //	defer img.Close()
 //
 //	detections, err := detector.Detect(img)
 //	for _, det := range detections {
 //	    fmt.Printf("QR at %v (confidence: %.2f)\n", det.BBoxXYXY, det.Confidence)
 //	}
-func (d *Detector) Detect(img gocv.Mat) ([]Detection, error) {
-	if img.Empty() {
+func (d *Detector) Detect(img *ImageSource) ([]Detection, error) {
+	if img == nil {
+		return nil, fmt.Errorf("image source is nil")
+	}
+
+	// Convert ImageSource to internal gocv.Mat
+	mat := img.toMat()
+	if mat.Empty() {
 		return nil, fmt.Errorf("input image is empty")
 	}
 
 	// Preprocess: letterbox, normalize, convert to CHW
-	inputData, letterboxInfo, err := preprocessImage(img, d.config.InputSize)
+	inputData, letterboxInfo, err := preprocessImage(mat, d.config.InputSize)
 	if err != nil {
 		return nil, fmt.Errorf("preprocessing failed: %w", err)
 	}
@@ -129,15 +137,15 @@ func (d *Detector) Detect(img gocv.Mat) ([]Detection, error) {
 }
 
 // DetectFile loads an image from a file and runs detection.
-// This is a convenience method that handles image loading.
+// This is a convenience method that handles image loading and resource cleanup.
 //
 // Example:
 //
 //	detections, err := detector.DetectFile("photo.jpg")
 func (d *Detector) DetectFile(imagePath string) ([]Detection, error) {
-	img := gocv.IMRead(imagePath, gocv.IMReadColor)
-	if img.Empty() {
-		return nil, fmt.Errorf("failed to load image: %s", imagePath)
+	img, err := NewImageFromFile(imagePath)
+	if err != nil {
+		return nil, err
 	}
 	defer img.Close()
 

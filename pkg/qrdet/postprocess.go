@@ -4,8 +4,8 @@ import (
 	"math"
 	"sort"
 
-	"github.com/mhey01/qreader/internal/geometry"
-	"github.com/mhey01/qreader/internal/mathutil"
+	"github.com/gemineo/gqreader/internal/geometry"
+	"github.com/gemineo/gqreader/internal/mathutil"
 )
 
 // rawDetection holds intermediate detection data before final processing.

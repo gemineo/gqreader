@@ -4,7 +4,7 @@ import (
 	"math"
 	"testing"
 
-	"github.com/mhey01/qreader/internal/geometry"
+	"github.com/gemineo/gqreader/internal/geometry"
 )
 
 func TestNMS(t *testing.T) {

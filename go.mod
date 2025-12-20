@@ -1,8 +1,8 @@
-module github.com/mhey01/qreader
+module github.com/gemineo/gqreader
 
-go 1.21
+go 1.25.5
 
 require (
-	github.com/yalue/onnxruntime_go v1.13.0
-	gocv.io/x/gocv v0.37.0
+	github.com/yalue/onnxruntime_go v1.25.0
+	gocv.io/x/gocv v0.42.0
 )

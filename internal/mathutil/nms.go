@@ -5,7 +5,7 @@ import (
 	"math"
 	"sort"
 
-	"github.com/mhey01/qreader/internal/geometry"
+	"github.com/gemineo/gqreader/internal/geometry"
 )
 
 // ScoredBox represents a bounding box with an associated score.
