@@ -35,7 +35,7 @@ __pycache__/
 
 # Models (too large for git, should be downloaded or generated)
 models/
-pkg/qrdet/models/
+qrdet/models/
 
 # OS
 .DS_Store

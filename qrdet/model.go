@@ -13,7 +13,7 @@ import (
 //  1. First export the model: make model
 //  2. Then build with tag: go build -tags embed_model ./cmd/qrdetect
 //
-// The model file is expected at: pkg/qrdet/models/qrdet-s.onnx
+// The model file is expected at: qrdet/models/qrdet-s.onnx
 // Size is approximately 20-50MB depending on the model variant.
 //
 //go:embed models/qrdet-s.onnx

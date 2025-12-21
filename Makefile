@@ -19,8 +19,8 @@ PYTHON_VENV = $(VENV)/bin/python
 # PyTorch model is cached in root models/ directory
 MODEL_CACHE_DIR = models
 MODEL_PT = $(MODEL_CACHE_DIR)/qrdet-s.pt
-# ONNX model goes in pkg/qrdet/models/ for go:embed
-MODEL_EMBED_DIR = pkg/qrdet/models
+# ONNX model goes in qrdet/models/ for go:embed
+MODEL_EMBED_DIR = qrdet/models
 MODEL_ONNX = $(MODEL_EMBED_DIR)/qrdet-s.onnx
 MODEL_URL = https://github.com/Eric-Canas/qrdet/releases/download/v2.0_release/qrdet-s.pt
 
@@ -99,7 +99,7 @@ test-coverage:
 
 bench:
 	@echo "==> Running benchmarks..."
-	$(GOTEST) -bench=. -benchmem ./pkg/qrdet/...
+	$(GOTEST) -bench=. -benchmem ./qrdet/...
 
 # ------------------------------------------------------------------------------
 # Development

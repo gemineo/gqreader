@@ -8,7 +8,7 @@
 
    📦 CORE IMPLEMENTATION
 
-   ✅ Detection Library (pkg/qrdet/)
+   ✅ Detection Library (qrdet/)
       - detector.go       : Main API (NewDetector, Detect, Close)
       - session.go        : ONNX Runtime C API wrapper
       - preprocess.go     : Image preprocessing & coordinate transformation
@@ -42,7 +42,7 @@
    📊 BUILD ARTIFACTS
 
    Development Mode (bin/qrdetect):   4.5 MB
-     ✓ Loads external ONNX model: pkg/qrdet/models/qrdet-s.onnx (45 MB)
+     ✓ Loads external ONNX model: qrdet/models/qrdet-s.onnx (45 MB)
      ✓ Use during development
      ✓ Total deployment: ~50 MB
 
@@ -94,7 +94,7 @@
       - Model adaptation notes (IMPORTANT for multi-format support)
       - Code location references
 
-   ✅ pkg/qrdet/MODEL_FORMAT.md
+   ✅ qrdet/MODEL_FORMAT.md
       - QRdet vs standard YOLOv8 comparison
       - Channel layout documentation
       - Migration checklist for multi-class models
@@ -154,7 +154,7 @@
 
    Commit 1: b4302ee - Initial commit (empty scaffold)
    Commit 2: 2437fcb - Add foundational code structure
-     ✓ Core detection library (pkg/qrdet/)
+     ✓ Core detection library (qrdet/)
      ✓ Internal utilities (internal/)
      ✓ Go module setup
      ✓ Build automation (Makefile, scripts/)

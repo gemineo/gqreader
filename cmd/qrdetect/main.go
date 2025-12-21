@@ -21,7 +21,7 @@ import (
 
 	"gocv.io/x/gocv"
 
-	"github.com/gemineo/gqreader/pkg/qrdet"
+	"github.com/gemineo/gqreader/qrdet"
 )
 
 func main() {

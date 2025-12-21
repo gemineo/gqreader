@@ -190,7 +190,7 @@ If you want to extend QReader to detect **multiple barcode formats** (QR, DataMa
 
 1. **Train or obtain a multi-class model**, NOT use the current QRdet model
 2. **Rewrite the output parsing logic** to handle variable class counts
-3. **Update constants in `pkg/qrdet/types.go`**:
+3. **Update constants in `qrdet/types.go`**:
    - `modelOutputChannels` will be different
    - Class extraction logic will change
    - Confidence score indexing will change
@@ -233,7 +233,7 @@ To support multiple barcode types, you would need to:
 **If planning multi-format support**:
 - Document this constraint early
 - Plan model retraining or multi-model strategy
-- Keep `pkg/qrdet/` modular to allow class configuration
+- Keep `qrdet/` modular to allow class configuration
 - Consider versioning the Go API separately from model format
 
 ## Critical Success Factors

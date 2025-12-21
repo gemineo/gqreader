@@ -230,7 +230,7 @@ QReader_PoC/
 ├── cmd/qrdetect/            # CLI application
 │   └── main.go              # Entry point
 │
-├── pkg/qrdet/               # Core detection library (reusable)
+├── qrdet/                   # Core detection library (reusable)
 │   ├── detector.go          # Main API
 │   ├── types.go             # Data structures
 │   ├── session.go           # ONNX Runtime wrapper
@@ -262,7 +262,7 @@ QReader_PoC/
 ```bash
 make build
 # Binary size: ~4.5 MB
-# Model loaded from: pkg/qrdet/models/qrdet-s.onnx (external file)
+# Model loaded from: qrdet/models/qrdet-s.onnx (external file)
 # Use during development, requires model file present
 ```
 
@@ -386,7 +386,7 @@ package main
 import (
     "fmt"
     "log"
-    "github.com/gemineo/gqreader/pkg/qrdet"
+    "github.com/gemineo/gqreader/qrdet"
 )
 
 func main() {
@@ -430,7 +430,7 @@ import (
     "fmt"
     "log"
     "os"
-    "github.com/gemineo/gqreader/pkg/qrdet"
+    "github.com/gemineo/gqreader/qrdet"
 )
 
 func main() {
@@ -497,7 +497,7 @@ For questions or issues:
 
 1. Check the troubleshooting section above
 2. Review `CLAUDE.md` for technical architecture
-3. Review `pkg/qrdet/MODEL_FORMAT.md` for model details
+3. Review `qrdet/MODEL_FORMAT.md` for model details
 4. Open an issue in the repository
 
 ## API Migration Guide

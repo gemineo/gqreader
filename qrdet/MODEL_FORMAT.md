@@ -128,10 +128,10 @@ Layout per prediction:
 
 ## Code Locations
 
-- **Model format constants**: `pkg/qrdet/types.go` (lines 136-154)
-- **Output parsing**: `pkg/qrdet/postprocess.go` (function `parseOutput0()`)
-- **Session management**: `pkg/qrdet/session.go` (tensor shapes)
-- **Detection structure**: `pkg/qrdet/types.go` (struct `Detection`)
+- **Model format constants**: `qrdet/types.go` (lines 136-154)
+- **Output parsing**: `qrdet/postprocess.go` (function `parseOutput0()`)
+- **Session management**: `qrdet/session.go` (tensor shapes)
+- **Detection structure**: `qrdet/types.go` (struct `Detection`)
 
 ## References
 
