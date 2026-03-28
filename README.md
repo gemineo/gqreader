@@ -3,7 +3,7 @@
 [![Go Reference](https://pkg.go.dev/badge/github.com/gemineo/gqreader.svg)](https://pkg.go.dev/github.com/gemineo/gqreader)
 [![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL%203.0-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 
-A native Go port of the Python [QReader](https://github.com/Eric-Canas/QReader/) library for high-accuracy QR code detection using YOLOv8, without Docker or Python runtime dependencies.
+A Go port of the Python [QReader](https://github.com/Eric-Canas/QReader/) library for high-accuracy QR code detection using YOLOv8, without Docker or Python runtime dependencies.
 
 > **Current Version**: v0.x (API in active development)
 >
@@ -14,10 +14,10 @@ A native Go port of the Python [QReader](https://github.com/Eric-Canas/QReader/)
 **QReader** is a high-accuracy QR code detection and reading system that combines:
 
 1. **QRdet**: A YOLOv8-based neural network that locates QR codes in images with high precision
-2. **Image Preprocessing**: Intelligent image transformation (contrast, threshold, resizing) to optimize detection
-3. **QR Decoding**: Reads the QR code content once located
+2. **Image Preprocessing**: Intelligent image transformation (contrast, threshold, resizing) to optimize detection (not implemented yet)
+3. **QR Decoding**: Reads the QR code content once located (not implemented yet)
 
-This Go implementation maintains full compatibility with the original Python QReader while eliminating external runtime dependencies.
+This Go implementation aims at maintaining full compatibility with the original Python QReader.
 
 ## Quick Start
 
@@ -25,7 +25,7 @@ This Go implementation maintains full compatibility with the original Python QRe
 
 Before you begin, ensure you have:
 
-- **Go 1.21+** ([Download here](https://golang.org/dl/))
+- **Go 1.25+**
 - **macOS or Linux** (Windows support can be added)
 - **Python 3.8+** (only needed for model export, one-time setup)
 - **OpenCV** (for image processing via GoCV)
@@ -44,6 +44,7 @@ cd gqreader
 #### 2. Install System Dependencies
 
 **macOS:**
+
 ```bash
 # Install OpenCV using Homebrew
 brew install opencv
@@ -53,6 +54,7 @@ brew install onnx-runtime
 ```
 
 **Linux (Ubuntu/Debian):**
+
 ```bash
 # Install OpenCV
 sudo apt-get install libopencv-dev
@@ -81,6 +83,7 @@ make model
 ```
 
 This will:
+
 - Create a Python virtual environment (`.venv/`)
 - Download the QRdet model (~24 MB)
 - Convert it to ONNX format (~47 MB)
@@ -123,15 +126,11 @@ This creates a `qrdetect` executable.
 #### Image Output (PNG)
 
 The annotated image shows:
+
 - **Green rectangles**: Bounding boxes of detected QR codes
 - **Blue quadrilaterals**: Precise boundaries of QR code corners
 - **Confidence scores**: Detection confidence (0-100%)
 
-Example:
-```
-[1] confidence=95%  bbox=[120, 150, 420, 450]
-[2] confidence=87%  bbox=[500, 200, 800, 500]
-```
 
 #### JSON Output
 
@@ -140,6 +139,7 @@ Example:
 ```
 
 Returns:
+
 ```json
 [
   {
@@ -163,15 +163,16 @@ qrdetect -input <image> [options]
 
 ### Options
 
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `-input` | string | **required** | Path to input image file |
-| `-output` | string | `output.png` | Path to save annotated image |
-| `-model` | string | (embedded) | Path to ONNX model (dev mode only) |
-| `-conf` | float | `0.5` | Confidence threshold (0.0-1.0) |
-| `-nms` | float | `0.3` | NMS IoU threshold (0.0-1.0) |
-| `-json` | bool | `false` | Output results as JSON instead of image |
-| `-v` | bool | `false` | Verbose output (debug info) |
+
+| Option    | Type   | Default      | Description                             |
+| --------- | ------ | ------------ | --------------------------------------- |
+| `-input`  | string | **required** | Path to input image file                |
+| `-output` | string | `output.png` | Path to save annotated image            |
+| `-model`  | string | (embedded)   | Path to ONNX model (dev mode only)      |
+| `-conf`   | float  | `0.5`        | Confidence threshold (0.0-1.0)          |
+| `-nms`    | float  | `0.3`        | NMS IoU threshold (0.0-1.0)             |
+| `-json`   | bool   | `false`      | Output results as JSON instead of image |
+| `-v`      | bool   | `false`      | Verbose output (debug info)             |
 
 ### Examples
 
@@ -221,16 +222,15 @@ make help            # Show all available commands
 ### Project Structure
 
 ```
-QReader_PoC/
+gqreader/
 ├── README.md                 # This file (user guide)
-├── CLAUDE.md                 # Developer documentation
 ├── Makefile                  # Build automation
 ├── go.mod / go.sum          # Go dependencies
 │
 ├── cmd/qrdetect/            # CLI application
 │   └── main.go              # Entry point
 │
-├── qrdet/                   # Core detection library (reusable)
+├── pkg/qrdet/               # Core detection library (reusable)
 │   ├── detector.go          # Main API
 │   ├── types.go             # Data structures
 │   ├── session.go           # ONNX Runtime wrapper
@@ -262,7 +262,7 @@ QReader_PoC/
 ```bash
 make build
 # Binary size: ~4.5 MB
-# Model loaded from: qrdet/models/qrdet-s.onnx (external file)
+# Model loaded from: pkg/qrdet/models/qrdet-s.onnx (external file)
 # Use during development, requires model file present
 ```
 
@@ -280,22 +280,6 @@ make build-embedded
 
 ### Common Issues
 
-#### 1. "Module not found" error
-
-```
-error: module github.com/mhey01/qreader: not found
-```
-
-**Solution**: Update the module name in `go.mod` to match your repository path:
-
-```bash
-# Edit go.mod and change:
-# module github.com/mhey01/qreader
-# to:
-# module <your-repository-path>
-
-go mod tidy
-```
 
 #### 2. "ONNX model not found"
 
@@ -344,6 +328,7 @@ export LD_LIBRARY_PATH=/opt/homebrew/opt/onnx-runtime/lib:$LD_LIBRARY_PATH
 ### Inference Speed
 
 On Apple M3 Pro (CPU-only):
+
 - **First detection**: ~0.5-1.0 seconds (model loading + inference)
 - **Subsequent detections**: ~0.2-0.3 seconds (model cached)
 - **Image size independence**: Handles any image size (auto-resized to 640×640)
@@ -367,6 +352,7 @@ On Apple M3 Pro (CPU-only):
 ### Future Capabilities
 
 The architecture is designed to support:
+
 - Additional barcode formats (DataMatrix, Code128, Interleaved 2 of 5)
 - QR code content reading/decoding
 - Image preprocessing pipeline optimization
@@ -386,7 +372,7 @@ package main
 import (
     "fmt"
     "log"
-    "github.com/gemineo/gqreader/qrdet"
+    "github.com/gemineo/gqreader/pkg/qrdet"
 )
 
 func main() {
@@ -430,7 +416,7 @@ import (
     "fmt"
     "log"
     "os"
-    "github.com/gemineo/gqreader/qrdet"
+    "github.com/gemineo/gqreader/pkg/qrdet"
 )
 
 func main() {
@@ -491,77 +477,9 @@ This project is a Go port of the original Python QReader library.
 - **ONNX Runtime**: https://onnxruntime.ai/
 - **GoCV (OpenCV bindings)**: https://gocv.io/
 
-## Support and Issues
 
-For questions or issues:
+This library is released under GNU AGPL v3, to comply with the ultralytics YOLOv8 licence. Whether this is required or not, due to the adaptation of the model by Eric Cañas, is a bit unclear. Hence licence might change in the future.
 
-1. Check the troubleshooting section above
-2. Review `CLAUDE.md` for technical architecture
-3. Review `qrdet/MODEL_FORMAT.md` for model details
-4. Open an issue in the repository
 
-## API Migration Guide
 
-gQReader is currently in v0.x phase. The API has been redesigned to remove CGO types from the public interface and provide better forward compatibility.
-
-### Recommended API (v0.6+)
-
-```go
-// ✅ Use ImageSource abstraction (no GoCV dependency)
-img, _ := qrdet.NewImageFromFile("photo.jpg")
-defer img.Close()
-detections, _ := detector.Detect(img)
-
-// ✅ Use accessor methods (future-proof)
-conf := det.GetConfidence()
-bbox := det.BBox()
-center := det.Center()
-area := det.Area()
 ```
-
-### Legacy API (still works in v0.x, will be removed in v1.0)
-
-```go
-// ⚠️ Deprecated: Direct GoCV usage (requires GoCV import)
-mat := gocv.IMRead("photo.jpg", gocv.IMReadColor)
-detections, _ := detector.Detect(qrdet.NewImageFromMat(mat))
-
-// ⚠️ Deprecated: Direct field access
-conf := det.Confidence        // Use det.GetConfidence() instead
-bbox := det.BBoxXYXY          // Use det.BBox() instead
-center := det.CenterXY        // Use det.Center() instead
-```
-
-### Migration Timeline
-
-- **v0.x** (current): Both old and new API work. Direct field access is deprecated but functional.
-- **v1.0** (planned): Only accessor methods remain. Direct field access removed.
-
-We recommend migrating to the new API now to avoid breaking changes in v1.0.
-
-## Changelog
-
-### Version 0.6.0 (2025-12-20) - Current
-
-**Breaking Changes:**
-- Module path changed from `github.com/mhey01/qreader` to `github.com/gemineo/gqreader`
-- `Detector.Detect()` now accepts `*ImageSource` instead of `gocv.Mat`
-
-**New Features:**
-- ✅ ImageSource abstraction (eliminates CGO types from public API)
-- ✅ Detection accessor methods (`GetConfidence()`, `BBox()`, `Area()`, etc.)
-- ✅ Support for loading images from bytes (`NewImageFromBytes`)
-- ✅ Support for raw pixel data (`NewImageFromRaw`)
-- ✅ New utility methods: `Area()`, `AspectRatio()`, `IsSquare()`
-
-**Technical:**
-- ✅ QR code detection via YOLOv8 segmentation
-- ✅ ONNX Runtime integration
-- ✅ CLI tool with PNG export
-- ✅ Bounding box and quadrilateral extraction
-- ✅ Full segmentation polygon support
-- ✅ Comprehensive godoc documentation
-
----
-
-**Last Updated**: December 20, 2025
