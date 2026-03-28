@@ -77,9 +77,8 @@ func processOutput(
 		// Transform polygon
 		transformedPolygon := info.transformPolygon(polygon)
 
-		// Fit quadrilateral
-		quad := fitQuadrilateral(transformedPolygon)
-		paddedQuad := expandQuadrilateral(quad, transformedPolygon)
+		// Fit quadrilateral (IoU-optimized) and compute expanded version
+		quad, paddedQuad := fitQuadrilateral(transformedPolygon)
 
 		// Build detection
 		det := buildDetection(

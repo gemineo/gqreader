@@ -2,90 +2,372 @@ package qrdet
 
 import (
 	"math"
+	"math/rand/v2"
 	"sort"
 )
 
-// fitQuadrilateral converts a polygon to a 4-point quadrilateral.
-// Uses a simplified approach:
-// 1. Compute convex hull
-// 2. Find the minimum area bounding quadrilateral
+// Fitting parameters matching Python's QuadrilateralFitter.fit() call in _qrdet_helpers.py:
 //
-// The resulting quadrilateral is ordered clockwise starting from top-left.
-func fitQuadrilateral(polygon [][2]float32) [4][2]float32 {
+//	QuadrilateralFitter(polygon).fit(
+//	    simplify_polygons_larger_than=8,
+//	    start_simplification_epsilon=0.1,
+//	    max_simplification_epsilon=2.0,
+//	    simplification_epsilon_increment=0.2,
+//	)
+const (
+	fitterMaxHullSides    = 8
+	fitterStartEpsilon    = 0.1
+	fitterMaxEpsilon      = 2.0
+	fitterEpsilonStep     = 0.2
+	fitterIoUThreshold    = 0.8
+	fitterMaxCombinations = 300
+	fitterNMMaxIter       = 200
+)
+
+// fitQuadrilateral fits a quadrilateral to a polygon using IoU-optimized search,
+// matching Python's QuadrilateralFitter algorithm from the quadrilateral_fitter package.
+//
+// The algorithm:
+//  1. Compute convex hull of the polygon
+//  2. Simplify hull via Douglas-Peucker if it has too many vertices
+//  3. Search all C(n,4) combinations for the quad with highest IoU against the hull
+//  4. Refine edges via line fitting (Nelder-Mead minimization of perpendicular distances)
+//  5. Expand fitted lines outward to contain all hull points
+//
+// Returns both the tight fitted quadrilateral and the expanded quadrilateral.
+// Both are ordered clockwise in image coordinates (Y-axis down).
+func fitQuadrilateral(polygon [][2]float32) (fitted, expanded [4][2]float32) {
 	if len(polygon) < 3 {
-		return [4][2]float32{}
+		return
 	}
 
-	// Compute convex hull
 	hull := convexHull(polygon)
-
 	if len(hull) < 3 {
-		return [4][2]float32{}
+		return
 	}
 
-	// If hull already has 4 or fewer points, use those
-	if len(hull) <= 4 {
-		return hullToQuad(hull)
+	poly64 := f32sToF64s(polygon)
+	hull64 := f32sToF64s(hull)
+	hullArea := polyArea(hull64)
+
+	if len(hull64) <= 4 {
+		q := hullToQuadF64(hull64)
+		q = orderClockwiseF64(q)
+		f := f64QuadToF32(q)
+		return f, f
 	}
 
-	// Find the minimum area bounding quadrilateral
-	// Simplified approach: find the 4 extreme points
-	quad := findExtremePoints(hull)
+	simplified := simplifyHullForFit(hull64, hullArea)
+	initialQuad := findInitialQuad(simplified, hull64, hullArea)
+	lines := finetuneLines(initialQuad, poly64)
 
-	// Order points clockwise from top-left
-	return orderQuadClockwise(quad)
+	fittedF64 := linesToQuad(lines)
+	fittedF64 = orderClockwiseF64(fittedF64)
+	fitted = f64QuadToF32(fittedF64)
+
+	expandedLines := expandLines(lines, hull64)
+	expandedF64 := linesToQuad(expandedLines)
+	expandedF64 = orderClockwiseF64(expandedF64)
+	expanded = f64QuadToF32(expandedF64)
+
+	return fitted, expanded
 }
 
-// expandQuadrilateral expands a quadrilateral to fully contain all polygon points.
-// This creates a "padded" version that can be used for cropping with margin.
-func expandQuadrilateral(quad [4][2]float32, polygon [][2]float32) [4][2]float32 {
-	if len(polygon) == 0 {
-		return quad
+// findInitialQuad searches all 4-vertex combinations of the simplified hull
+// for the quadrilateral with the highest IoU against the original hull.
+func findInitialQuad(simplified, hull [][2]float64, hullArea float64) [4][2]float64 {
+	n := len(simplified)
+	if n < 4 {
+		return hullToQuadF64(simplified)
 	}
 
-	// Find the centroid of the quad
-	var cx, cy float32
-	for i := 0; i < 4; i++ {
-		cx += quad[i][0]
-		cy += quad[i][1]
-	}
-	cx /= 4
-	cy /= 4
-
-	// Check if all polygon points are inside the quad
-	// If not, expand the quad
-	maxExpansion := float32(1.0)
-
-	for _, p := range polygon {
-		if !pointInQuad(p, quad) {
-			// Calculate the expansion needed
-			dist := pointToQuadDistance(p, quad, cx, cy)
-			expansion := dist * 1.1 // 10% margin
-			if expansion > maxExpansion {
-				maxExpansion = expansion
+	type combo [4]int
+	var combos []combo
+	for i := 0; i < n-3; i++ {
+		for j := i + 1; j < n-2; j++ {
+			for k := j + 1; k < n-1; k++ {
+				for l := k + 1; l < n; l++ {
+					combos = append(combos, combo{i, j, k, l})
+				}
 			}
 		}
 	}
 
-	// Expand the quad from its center
-	var expanded [4][2]float32
+	if len(combos) > fitterMaxCombinations {
+		for i := len(combos) - 1; i > 0; i-- {
+			j := rand.IntN(i + 1)
+			combos[i], combos[j] = combos[j], combos[i]
+		}
+		combos = combos[:fitterMaxCombinations]
+	}
+
+	bestIoU := 0.0
+	var bestQuad [4][2]float64
+	for _, c := range combos {
+		quad := [][2]float64{simplified[c[0]], simplified[c[1]], simplified[c[2]], simplified[c[3]]}
+		iou := polyIoU(hull, quad, hullArea)
+		if iou > bestIoU {
+			bestIoU = iou
+			bestQuad = [4][2]float64{quad[0], quad[1], quad[2], quad[3]}
+			if iou >= 1.0 {
+				break
+			}
+		}
+	}
+
+	return bestQuad
+}
+
+// finetuneLines fits lines to the polygon points grouped by nearest quad edge.
+// Each line is refined via Nelder-Mead minimization of the sum of absolute
+// perpendicular distances, matching Python's scipy.optimize.minimize approach.
+func finetuneLines(initialQuad [4][2]float64, polygon [][2]float64) [4]lineEq {
+	var initial [4]lineEq
 	for i := 0; i < 4; i++ {
-		dx := quad[i][0] - cx
-		dy := quad[i][1] - cy
-		expanded[i][0] = cx + dx*maxExpansion
-		expanded[i][1] = cy + dy*maxExpansion
+		j := (i + 1) % 4
+		initial[i] = lineFromPoints(
+			initialQuad[i][0], initialQuad[i][1],
+			initialQuad[j][0], initialQuad[j][1],
+		)
+	}
+
+	// Assign each polygon point to its nearest line
+	assignments := make([]int, len(polygon))
+	for pi, pt := range polygon {
+		minDist := math.MaxFloat64
+		for li := 0; li < 4; li++ {
+			d := initial[li].distance(pt[0], pt[1])
+			if d < minDist {
+				minDist = d
+				assignments[pi] = li
+			}
+		}
+	}
+
+	var fitted [4]lineEq
+	for li := 0; li < 4; li++ {
+		var pts [][2]float64
+		for pi, ai := range assignments {
+			if ai == li {
+				pts = append(pts, polygon[pi])
+			}
+		}
+
+		if len(pts) < 2 {
+			fitted[li] = initial[li]
+			continue
+		}
+
+		// Objective: sum(|Ax+By+C|) / sqrt(A²+B²)  — matches Python's perpendicular_distance
+		objective := func(p [3]float64) float64 {
+			norm := math.Sqrt(p[0]*p[0] + p[1]*p[1])
+			if norm < 1e-12 {
+				return math.MaxFloat64
+			}
+			sum := 0.0
+			for _, pt := range pts {
+				sum += math.Abs(p[0]*pt[0] + p[1]*pt[1] + p[2])
+			}
+			return sum / norm
+		}
+
+		x0 := [3]float64{initial[li].A, initial[li].B, initial[li].C}
+		result := nelderMead3(objective, x0, fitterNMMaxIter)
+		fitted[li] = lineEq{A: result[0], B: result[1], C: result[2]}
+	}
+
+	return fitted
+}
+
+// expandLines moves each fitted line outward to contain all convex hull points.
+// For each line, if any hull point is on the opposite side from the centroid,
+// the line is shifted to pass through the farthest such point.
+func expandLines(lines [4]lineEq, hull [][2]float64) [4]lineEq {
+	var cx, cy float64
+	for _, p := range hull {
+		cx += p[0]
+		cy += p[1]
+	}
+	cx /= float64(len(hull))
+	cy /= float64(len(hull))
+
+	var expanded [4]lineEq
+	for i := 0; i < 4; i++ {
+		expanded[i] = lines[i]
+		centroidSign := signF64(expanded[i].position(cx, cy))
+		if centroidSign == 0 {
+			continue
+		}
+
+		maxDist := 0.0
+		var farthest [2]float64
+		found := false
+		for _, p := range hull {
+			pos := expanded[i].position(p[0], p[1])
+			if signF64(pos) != centroidSign {
+				d := expanded[i].distance(p[0], p[1])
+				if d > maxDist {
+					maxDist = d
+					farthest = p
+					found = true
+				}
+			}
+		}
+
+		if found {
+			expanded[i].moveToPoint(farthest[0], farthest[1])
+		}
 	}
 
 	return expanded
 }
 
-// convexHull computes the convex hull of a set of points using Graham scan.
+// linesToQuad computes the 4 intersection points of consecutive line pairs.
+func linesToQuad(lines [4]lineEq) [4][2]float64 {
+	var quad [4][2]float64
+	for i := 0; i < 4; i++ {
+		j := (i + 1) % 4
+		if pt, ok := lines[i].intersect(lines[j]); ok {
+			quad[i] = pt
+		}
+	}
+	return quad
+}
+
+// ----------------------------------------------------------------
+// Line equation  Ax + By + C = 0
+// ----------------------------------------------------------------
+
+type lineEq struct {
+	A, B, C float64
+}
+
+func lineFromPoints(x1, y1, x2, y2 float64) lineEq {
+	return lineEq{A: y2 - y1, B: x1 - x2, C: x2*y1 - x1*y2}
+}
+
+func (l lineEq) norm() float64 { return math.Hypot(l.A, l.B) }
+
+func (l lineEq) position(x, y float64) float64 { return l.A*x + l.B*y + l.C }
+
+func (l lineEq) distance(x, y float64) float64 {
+	n := l.norm()
+	if n < 1e-12 {
+		return 0
+	}
+	return math.Abs(l.position(x, y)) / n
+}
+
+func (l lineEq) intersect(o lineEq) ([2]float64, bool) {
+	det := l.A*o.B - o.A*l.B
+	if math.Abs(det) < 1e-12 {
+		return [2]float64{}, false
+	}
+	return [2]float64{
+		(-l.C*o.B + o.C*l.B) / det,
+		(-l.A*o.C + o.A*l.C) / det,
+	}, true
+}
+
+func (l *lineEq) moveToPoint(x, y float64) {
+	l.C = -(l.A*x + l.B*y)
+}
+
+// ----------------------------------------------------------------
+// Polygon geometry (float64)
+// ----------------------------------------------------------------
+
+// polyArea computes area using the shoelace formula.
+func polyArea(pts [][2]float64) float64 {
+	n := len(pts)
+	if n < 3 {
+		return 0
+	}
+	s := 0.0
+	for i := 0; i < n; i++ {
+		j := (i + 1) % n
+		s += pts[i][0]*pts[j][1] - pts[j][0]*pts[i][1]
+	}
+	return math.Abs(s) / 2
+}
+
+// polyIoU computes Intersection over Union of two convex polygons.
+func polyIoU(p1, p2 [][2]float64, p1Area float64) float64 {
+	inter := sutherlandHodgman(p1, p2)
+	if len(inter) < 3 {
+		return 0
+	}
+	intArea := polyArea(inter)
+	p2Area := polyArea(p2)
+	union := p1Area + p2Area - intArea
+	if union <= 0 {
+		return 0
+	}
+	return intArea / union
+}
+
+// sutherlandHodgman clips subject polygon by clip polygon.
+// Both must be convex with consistent winding (CCW).
+func sutherlandHodgman(subject, clip [][2]float64) [][2]float64 {
+	output := make([][2]float64, len(subject))
+	copy(output, subject)
+
+	for i := range clip {
+		if len(output) == 0 {
+			return nil
+		}
+		input := output
+		output = make([][2]float64, 0, len(input)+2)
+
+		a := clip[i]
+		b := clip[(i+1)%len(clip)]
+
+		for j := range input {
+			cur := input[j]
+			prev := input[(j+len(input)-1)%len(input)]
+
+			curIn := leftOf(a, b, cur) >= 0
+			prevIn := leftOf(a, b, prev) >= 0
+
+			if curIn {
+				if !prevIn {
+					output = append(output, segIsect(prev, cur, a, b))
+				}
+				output = append(output, cur)
+			} else if prevIn {
+				output = append(output, segIsect(prev, cur, a, b))
+			}
+		}
+	}
+
+	return output
+}
+
+func leftOf(a, b, c [2]float64) float64 {
+	return (b[0]-a[0])*(c[1]-a[1]) - (b[1]-a[1])*(c[0]-a[0])
+}
+
+func segIsect(p1, p2, p3, p4 [2]float64) [2]float64 {
+	d1x, d1y := p2[0]-p1[0], p2[1]-p1[1]
+	d2x, d2y := p4[0]-p3[0], p4[1]-p3[1]
+	denom := d1x*d2y - d1y*d2x
+	if math.Abs(denom) < 1e-12 {
+		return [2]float64{(p1[0] + p2[0]) / 2, (p1[1] + p2[1]) / 2}
+	}
+	t := ((p3[0]-p1[0])*d2y - (p3[1]-p1[1])*d2x) / denom
+	return [2]float64{p1[0] + t*d1x, p1[1] + t*d1y}
+}
+
+// ----------------------------------------------------------------
+// Convex hull (Graham scan, CCW winding)
+// ----------------------------------------------------------------
+
 func convexHull(points [][2]float32) [][2]float32 {
 	if len(points) < 3 {
 		return points
 	}
 
-	// Find the bottom-most point (or left-most in case of tie)
+	// Find bottom-most (then left-most) point
 	minIdx := 0
 	for i := 1; i < len(points); i++ {
 		if points[i][1] < points[minIdx][1] ||
@@ -94,33 +376,26 @@ func convexHull(points [][2]float32) [][2]float32 {
 		}
 	}
 
-	// Swap to first position
-	points[0], points[minIdx] = points[minIdx], points[0]
-	pivot := points[0]
+	pts := make([][2]float32, len(points))
+	copy(pts, points)
+	pts[0], pts[minIdx] = pts[minIdx], pts[0]
+	pivot := pts[0]
 
-	// Sort by polar angle with respect to pivot
-	sortedPoints := make([][2]float32, len(points)-1)
-	copy(sortedPoints, points[1:])
-
-	sort.Slice(sortedPoints, func(i, j int) bool {
-		angle1 := math.Atan2(float64(sortedPoints[i][1]-pivot[1]), float64(sortedPoints[i][0]-pivot[0]))
-		angle2 := math.Atan2(float64(sortedPoints[j][1]-pivot[1]), float64(sortedPoints[j][0]-pivot[0]))
-		if angle1 != angle2 {
-			return angle1 < angle2
+	sorted := make([][2]float32, len(pts)-1)
+	copy(sorted, pts[1:])
+	sort.Slice(sorted, func(i, j int) bool {
+		a1 := math.Atan2(float64(sorted[i][1]-pivot[1]), float64(sorted[i][0]-pivot[0]))
+		a2 := math.Atan2(float64(sorted[j][1]-pivot[1]), float64(sorted[j][0]-pivot[0]))
+		if a1 != a2 {
+			return a1 < a2
 		}
-		// If same angle, closer point first
-		dist1 := squaredDistance(pivot, sortedPoints[i])
-		dist2 := squaredDistance(pivot, sortedPoints[j])
-		return dist1 < dist2
+		return squaredDist32(pivot, sorted[i]) < squaredDist32(pivot, sorted[j])
 	})
 
-	// Build hull using stack
-	hull := make([][2]float32, 0, len(points))
+	hull := make([][2]float32, 0, len(pts))
 	hull = append(hull, pivot)
-
-	for _, p := range sortedPoints {
-		// Remove points that make clockwise turn
-		for len(hull) > 1 && crossProduct(hull[len(hull)-2], hull[len(hull)-1], p) <= 0 {
+	for _, p := range sorted {
+		for len(hull) > 1 && cross32(hull[len(hull)-2], hull[len(hull)-1], p) <= 0 {
 			hull = hull[:len(hull)-1]
 		}
 		hull = append(hull, p)
@@ -129,220 +404,336 @@ func convexHull(points [][2]float32) [][2]float32 {
 	return hull
 }
 
-// crossProduct computes the cross product of vectors (o->a) and (o->b).
-// Positive = counterclockwise, negative = clockwise, zero = collinear.
-func crossProduct(o, a, b [2]float32) float32 {
-	return (a[0]-o[0])*(b[1]-o[1]) - (a[1]-o[1])*(b[0]-o[0])
-}
+// ----------------------------------------------------------------
+// Douglas-Peucker simplification for closed polygon (ring)
+// ----------------------------------------------------------------
 
-// squaredDistance computes the squared distance between two points.
-func squaredDistance(a, b [2]float32) float32 {
-	dx := b[0] - a[0]
-	dy := b[1] - a[1]
-	return dx*dx + dy*dy
-}
+// simplifyHullForFit progressively simplifies the hull until it has ≤ maxSides vertices.
+func simplifyHullForFit(hull [][2]float64, hullArea float64) [][2]float64 {
+	if len(hull) <= fitterMaxHullSides {
+		return hull
+	}
 
-// hullToQuad converts a hull with <=4 points to a quadrilateral.
-func hullToQuad(hull [][2]float32) [4][2]float32 {
-	var quad [4][2]float32
-
-	switch len(hull) {
-	case 0:
-		return quad
-	case 1:
-		// Single point: create a small square around it
-		p := hull[0]
-		quad[0] = [2]float32{p[0] - 1, p[1] - 1}
-		quad[1] = [2]float32{p[0] + 1, p[1] - 1}
-		quad[2] = [2]float32{p[0] + 1, p[1] + 1}
-		quad[3] = [2]float32{p[0] - 1, p[1] + 1}
-	case 2:
-		// Line: create a thin rectangle
-		p1, p2 := hull[0], hull[1]
-		dx := p2[0] - p1[0]
-		dy := p2[1] - p1[1]
-		length := float32(math.Sqrt(float64(dx*dx + dy*dy)))
-		if length < 0.001 {
-			length = 1
+	simplified := hull
+	epsilon := fitterStartEpsilon
+	for epsilon <= fitterMaxEpsilon {
+		candidate := simplifyRingDP(simplified, epsilon)
+		if len(candidate) < 4 {
+			break
 		}
-		nx := -dy / length // Normal vector
-		ny := dx / length
-		quad[0] = [2]float32{p1[0] + nx, p1[1] + ny}
-		quad[1] = [2]float32{p2[0] + nx, p2[1] + ny}
-		quad[2] = [2]float32{p2[0] - nx, p2[1] - ny}
-		quad[3] = [2]float32{p1[0] - nx, p1[1] - ny}
-	case 3:
-		// Triangle: add a fourth point
-		copy(quad[:3], hull)
-		// Add midpoint of longest edge
-		var maxDist float32
-		var midpoint [2]float32
-		for i := 0; i < 3; i++ {
-			j := (i + 1) % 3
-			dist := squaredDistance(hull[i], hull[j])
-			if dist > maxDist {
-				maxDist = dist
-				midpoint = [2]float32{
-					(hull[i][0] + hull[j][0]) / 2,
-					(hull[i][1] + hull[j][1]) / 2,
-				}
+		if len(candidate) <= fitterMaxHullSides {
+			iou := polyIoU(hull, candidate, hullArea)
+			if iou > fitterIoUThreshold {
+				return candidate
 			}
+			return simplified
 		}
-		quad[3] = midpoint
-	case 4:
-		copy(quad[:], hull)
+		simplified = candidate
+		epsilon += fitterEpsilonStep
 	}
 
-	return orderQuadClockwise(quad)
+	return simplified
 }
 
-// findExtremePoints finds 4 extreme points from a convex hull.
-// Uses the rotating calipers concept simplified.
-func findExtremePoints(hull [][2]float32) [4][2]float32 {
-	var quad [4][2]float32
+// simplifyRingDP applies Douglas-Peucker to a closed polygon.
+func simplifyRingDP(ring [][2]float64, epsilon float64) [][2]float64 {
+	n := len(ring)
+	if n <= 4 {
+		return ring
+	}
 
-	// Find extreme points in each direction
-	minX, maxX := hull[0], hull[0]
-	minY, maxY := hull[0], hull[0]
-
-	for _, p := range hull[1:] {
-		if p[0] < minX[0] {
-			minX = p
-		}
-		if p[0] > maxX[0] {
-			maxX = p
-		}
-		if p[1] < minY[1] {
-			minY = p
-		}
-		if p[1] > maxY[1] {
-			maxY = p
+	// Find two farthest points as split anchors
+	maxDist := 0.0
+	farIdx := 0
+	for i := 1; i < n; i++ {
+		d := distF64(ring[0], ring[i])
+		if d > maxDist {
+			maxDist = d
+			farIdx = i
 		}
 	}
 
-	quad[0] = minY // Top (minimum Y)
-	quad[1] = maxX // Right
-	quad[2] = maxY // Bottom (maximum Y)
-	quad[3] = minX // Left
+	// Split into two paths and simplify each
+	path1 := make([][2]float64, farIdx+1)
+	copy(path1, ring[:farIdx+1])
 
-	return quad
-}
+	path2Len := n - farIdx + 1
+	path2 := make([][2]float64, path2Len)
+	copy(path2, ring[farIdx:])
+	path2[path2Len-1] = ring[0]
 
-// orderQuadClockwise orders quadrilateral points clockwise starting from top-left.
-func orderQuadClockwise(quad [4][2]float32) [4][2]float32 {
-	// Find centroid
-	var cx, cy float32
-	for i := 0; i < 4; i++ {
-		cx += quad[i][0]
-		cy += quad[i][1]
-	}
-	cx /= 4
-	cy /= 4
+	sp1 := simplifyOpenDP(path1, epsilon)
+	sp2 := simplifyOpenDP(path2, epsilon)
 
-	// Sort by angle from centroid
-	points := quad[:]
-	sort.Slice(points, func(i, j int) bool {
-		angle1 := math.Atan2(float64(points[i][1]-cy), float64(points[i][0]-cx))
-		angle2 := math.Atan2(float64(points[j][1]-cy), float64(points[j][0]-cx))
-		return angle1 < angle2
-	})
-
-	// Find top-left (minimum x+y after sorting)
-	topLeftIdx := 0
-	minSum := points[0][0] + points[0][1]
-	for i := 1; i < 4; i++ {
-		sum := points[i][0] + points[i][1]
-		if sum < minSum {
-			minSum = sum
-			topLeftIdx = i
-		}
-	}
-
-	// Rotate so top-left is first
-	var result [4][2]float32
-	for i := 0; i < 4; i++ {
-		result[i] = points[(topLeftIdx+i)%4]
-	}
+	result := make([][2]float64, 0, len(sp1)+len(sp2)-2)
+	result = append(result, sp1[:len(sp1)-1]...)
+	result = append(result, sp2[:len(sp2)-1]...)
 
 	return result
 }
 
-// pointInQuad checks if a point is inside a quadrilateral.
-func pointInQuad(p [2]float32, quad [4][2]float32) bool {
-	// Use winding number algorithm
-	windingNumber := 0
+// simplifyOpenDP applies Douglas-Peucker to an open polyline.
+func simplifyOpenDP(pts [][2]float64, epsilon float64) [][2]float64 {
+	if len(pts) <= 2 {
+		return pts
+	}
 
-	for i := 0; i < 4; i++ {
-		j := (i + 1) % 4
-		if quad[i][1] <= p[1] {
-			if quad[j][1] > p[1] {
-				if crossProduct(quad[i], quad[j], p) > 0 {
-					windingNumber++
-				}
-			}
+	maxDist := 0.0
+	maxIdx := 0
+	for i := 1; i < len(pts)-1; i++ {
+		d := ptSegDist(pts[i], pts[0], pts[len(pts)-1])
+		if d > maxDist {
+			maxDist = d
+			maxIdx = i
+		}
+	}
+
+	if maxDist > epsilon {
+		left := simplifyOpenDP(pts[:maxIdx+1], epsilon)
+		right := simplifyOpenDP(pts[maxIdx:], epsilon)
+		result := make([][2]float64, 0, len(left)+len(right)-1)
+		result = append(result, left[:len(left)-1]...)
+		result = append(result, right...)
+		return result
+	}
+
+	return [][2]float64{pts[0], pts[len(pts)-1]}
+}
+
+// ----------------------------------------------------------------
+// Nelder-Mead optimizer for 3 parameters
+// ----------------------------------------------------------------
+
+func nelderMead3(fn func([3]float64) float64, x0 [3]float64, maxIter int) [3]float64 {
+	const (
+		alpha = 1.0 // reflection
+		gamma = 2.0 // expansion
+		rho   = 0.5 // contraction
+		sigma = 0.5 // shrink
+	)
+
+	var s [4][3]float64
+	s[0] = x0
+	for i := 0; i < 3; i++ {
+		s[i+1] = x0
+		if math.Abs(x0[i]) > 1e-6 {
+			s[i+1][i] *= 1.05
 		} else {
-			if quad[j][1] <= p[1] {
-				if crossProduct(quad[i], quad[j], p) < 0 {
-					windingNumber--
-				}
+			s[i+1][i] = 0.00025
+		}
+	}
+
+	var fv [4]float64
+	for i := range s {
+		fv[i] = fn(s[i])
+	}
+
+	for iter := 0; iter < maxIter; iter++ {
+		// Sort by function value
+		idx := [4]int{0, 1, 2, 3}
+		sort.Slice(idx[:], func(a, b int) bool { return fv[idx[a]] < fv[idx[b]] })
+		var ss [4][3]float64
+		var sf [4]float64
+		for i, ii := range idx {
+			ss[i] = s[ii]
+			sf[i] = fv[ii]
+		}
+		s, fv = ss, sf
+
+		// Centroid of the 3 best vertices
+		var c [3]float64
+		for i := 0; i < 3; i++ {
+			for d := 0; d < 3; d++ {
+				c[d] += s[i][d]
 			}
 		}
-	}
+		for d := range c {
+			c[d] /= 3
+		}
 
-	return windingNumber != 0
-}
+		// Reflection
+		var xr [3]float64
+		for d := range xr {
+			xr[d] = c[d] + alpha*(c[d]-s[3][d])
+		}
+		fr := fn(xr)
 
-// pointToQuadDistance calculates how much the quad needs to expand to contain a point.
-func pointToQuadDistance(p [2]float32, quad [4][2]float32, cx, cy float32) float32 {
-	// Calculate the distance from center to point, relative to distance from center to quad edge
-	distToPoint := float32(math.Sqrt(float64((p[0]-cx)*(p[0]-cx) + (p[1]-cy)*(p[1]-cy))))
+		if fr >= fv[0] && fr < fv[2] {
+			s[3], fv[3] = xr, fr
+			continue
+		}
 
-	if distToPoint < 0.001 {
-		return 1.0
-	}
+		// Expansion
+		if fr < fv[0] {
+			var xe [3]float64
+			for d := range xe {
+				xe[d] = c[d] + gamma*(xr[d]-c[d])
+			}
+			if fe := fn(xe); fe < fr {
+				s[3], fv[3] = xe, fe
+			} else {
+				s[3], fv[3] = xr, fr
+			}
+			continue
+		}
 
-	// Find the intersection of the ray from center through point with the quad
-	angle := math.Atan2(float64(p[1]-cy), float64(p[0]-cx))
+		// Contraction
+		var xc [3]float64
+		for d := range xc {
+			xc[d] = c[d] + rho*(s[3][d]-c[d])
+		}
+		if fc := fn(xc); fc < fv[3] {
+			s[3], fv[3] = xc, fc
+			continue
+		}
 
-	// Find the edge that the ray intersects
-	var minT float32 = float32(math.MaxFloat32)
-	for i := 0; i < 4; i++ {
-		j := (i + 1) % 4
-		t := raySegmentIntersection(cx, cy, float32(angle), quad[i], quad[j])
-		if t > 0 && t < minT {
-			minT = t
+		// Shrink toward best
+		for i := 1; i < 4; i++ {
+			for d := 0; d < 3; d++ {
+				s[i][d] = s[0][d] + sigma*(s[i][d]-s[0][d])
+			}
+			fv[i] = fn(s[i])
 		}
 	}
 
-	if minT == float32(math.MaxFloat32) {
-		return 1.0
+	best := 0
+	for i := 1; i < 4; i++ {
+		if fv[i] < fv[best] {
+			best = i
+		}
 	}
-
-	return distToPoint / minT
+	return s[best]
 }
 
-// raySegmentIntersection finds the parameter t where ray from (ox, oy) at angle intersects segment.
-func raySegmentIntersection(ox, oy, angle float32, a, b [2]float32) float32 {
-	dx := float32(math.Cos(float64(angle)))
-	dy := float32(math.Sin(float64(angle)))
+// ----------------------------------------------------------------
+// Ordering and conversion helpers
+// ----------------------------------------------------------------
 
-	// Ray: P = O + t * D
-	// Segment: P = A + s * (B - A)
+// orderClockwiseF64 orders quad vertices clockwise starting from top-left (image coords, Y down).
+func orderClockwiseF64(quad [4][2]float64) [4][2]float64 {
+	var cx, cy float64
+	for _, p := range quad {
+		cx += p[0]
+		cy += p[1]
+	}
+	cx /= 4
+	cy /= 4
 
-	segDx := b[0] - a[0]
-	segDy := b[1] - a[1]
+	pts := quad[:]
+	sort.Slice(pts, func(i, j int) bool {
+		return math.Atan2(pts[i][1]-cy, pts[i][0]-cx) < math.Atan2(pts[j][1]-cy, pts[j][0]-cx)
+	})
 
-	denom := dx*segDy - dy*segDx
-	if math.Abs(float64(denom)) < 1e-10 {
-		return -1 // Parallel
+	// Rotate so top-left (min x+y) is first
+	minSum := math.MaxFloat64
+	startIdx := 0
+	for i, p := range pts {
+		if s := p[0] + p[1]; s < minSum {
+			minSum = s
+			startIdx = i
+		}
 	}
 
-	t := ((a[0]-ox)*segDy - (a[1]-oy)*segDx) / denom
-	s := ((a[0]-ox)*dy - (a[1]-oy)*dx) / denom
-
-	if s >= 0 && s <= 1 && t > 0 {
-		return t
+	var result [4][2]float64
+	for i := 0; i < 4; i++ {
+		result[i] = pts[(startIdx+i)%4]
 	}
+	return result
+}
 
-	return -1
+// hullToQuadF64 converts a hull with ≤4 points to a quadrilateral.
+func hullToQuadF64(hull [][2]float64) [4][2]float64 {
+	var q [4][2]float64
+	switch len(hull) {
+	case 0:
+		return q
+	case 1:
+		p := hull[0]
+		q = [4][2]float64{
+			{p[0] - 1, p[1] - 1}, {p[0] + 1, p[1] - 1},
+			{p[0] + 1, p[1] + 1}, {p[0] - 1, p[1] + 1},
+		}
+	case 2:
+		p1, p2 := hull[0], hull[1]
+		l := math.Hypot(p2[0]-p1[0], p2[1]-p1[1])
+		if l < 0.001 {
+			l = 1
+		}
+		nx, ny := -(p2[1]-p1[1])/l, (p2[0]-p1[0])/l
+		q = [4][2]float64{
+			{p1[0] + nx, p1[1] + ny}, {p2[0] + nx, p2[1] + ny},
+			{p2[0] - nx, p2[1] - ny}, {p1[0] - nx, p1[1] - ny},
+		}
+	case 3:
+		for i := 0; i < 3; i++ {
+			q[i] = hull[i]
+		}
+		// Fourth point: midpoint of longest edge
+		var maxD float64
+		for i := 0; i < 3; i++ {
+			j := (i + 1) % 3
+			if d := distF64(hull[i], hull[j]); d > maxD {
+				maxD = d
+				q[3] = [2]float64{(hull[i][0] + hull[j][0]) / 2, (hull[i][1] + hull[j][1]) / 2}
+			}
+		}
+	default:
+		for i := 0; i < 4 && i < len(hull); i++ {
+			q[i] = hull[i]
+		}
+	}
+	return orderClockwiseF64(q)
+}
+
+func f32sToF64s(pts [][2]float32) [][2]float64 {
+	out := make([][2]float64, len(pts))
+	for i, p := range pts {
+		out[i] = [2]float64{float64(p[0]), float64(p[1])}
+	}
+	return out
+}
+
+func f64QuadToF32(q [4][2]float64) [4][2]float32 {
+	var out [4][2]float32
+	for i, p := range q {
+		out[i] = [2]float32{float32(p[0]), float32(p[1])}
+	}
+	return out
+}
+
+// ----------------------------------------------------------------
+// Low-level geometric helpers
+// ----------------------------------------------------------------
+
+func cross32(o, a, b [2]float32) float32 {
+	return (a[0]-o[0])*(b[1]-o[1]) - (a[1]-o[1])*(b[0]-o[0])
+}
+
+func squaredDist32(a, b [2]float32) float32 {
+	dx, dy := b[0]-a[0], b[1]-a[1]
+	return dx*dx + dy*dy
+}
+
+func distF64(a, b [2]float64) float64 {
+	return math.Hypot(b[0]-a[0], b[1]-a[1])
+}
+
+// ptSegDist computes perpendicular distance from point p to line through a-b.
+func ptSegDist(p, a, b [2]float64) float64 {
+	dx, dy := b[0]-a[0], b[1]-a[1]
+	lenSq := dx*dx + dy*dy
+	if lenSq < 1e-12 {
+		return distF64(p, a)
+	}
+	return math.Abs(dx*(a[1]-p[1])-dy*(a[0]-p[0])) / math.Sqrt(lenSq)
+}
+
+func signF64(x float64) int {
+	if x > 0 {
+		return 1
+	}
+	if x < 0 {
+		return -1
+	}
+	return 0
 }

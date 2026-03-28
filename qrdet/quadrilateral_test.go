@@ -7,139 +7,128 @@ import (
 
 func TestFitQuadrilateral(t *testing.T) {
 	tests := []struct {
-		name     string
-		polygon  [][2]float32
-		wantSize int
+		name    string
+		polygon [][2]float32
 	}{
 		{
 			name: "square polygon",
 			polygon: [][2]float32{
 				{0, 0}, {10, 0}, {10, 10}, {0, 10},
 			},
-			wantSize: 4,
 		},
 		{
 			name: "triangle (less than 4 points)",
 			polygon: [][2]float32{
 				{0, 0}, {10, 0}, {5, 10},
 			},
-			wantSize: 4, // Converts to 4-point quad (duplicates one point)
 		},
 		{
 			name: "complex polygon (more than 4 points)",
 			polygon: [][2]float32{
 				{0, 0}, {5, 0}, {10, 0}, {10, 5}, {10, 10}, {5, 10}, {0, 10}, {0, 5},
 			},
-			wantSize: 4, // Should fit to 4 points
 		},
 		{
-			name:     "empty polygon",
-			polygon:  [][2]float32{},
-			wantSize: 4, // Returns zero quad
+			name:    "empty polygon",
+			polygon: [][2]float32{},
 		},
 		{
 			name: "single point",
 			polygon: [][2]float32{
 				{5, 5},
 			},
-			wantSize: 4, // Creates small square around point
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := fitQuadrilateral(tt.polygon)
+			fitted, expanded := fitQuadrilateral(tt.polygon)
 
-			if len(result) != tt.wantSize {
-				t.Errorf("fitQuadrilateral() returned %d points, want %d", len(result), tt.wantSize)
+			for _, result := range [][4][2]float32{fitted, expanded} {
+				for i, point := range result {
+					if math.IsNaN(float64(point[0])) || math.IsInf(float64(point[0]), 0) {
+						t.Errorf("quad point[%d].x is invalid: %v", i, point[0])
+					}
+					if math.IsNaN(float64(point[1])) || math.IsInf(float64(point[1]), 0) {
+						t.Errorf("quad point[%d].y is invalid: %v", i, point[1])
+					}
+				}
 			}
 
-			// Verify result points are valid (not NaN or Inf)
-			for i, point := range result {
-				if math.IsNaN(float64(point[0])) || math.IsInf(float64(point[0]), 0) {
-					t.Errorf("fitQuadrilateral() point[%d].x is invalid: %v", i, point[0])
+			// For non-empty polygons, expanded quad bbox should contain the polygon
+			if len(tt.polygon) >= 3 {
+				minX, minY := tt.polygon[0][0], tt.polygon[0][1]
+				maxX, maxY := tt.polygon[0][0], tt.polygon[0][1]
+				for _, p := range tt.polygon {
+					if p[0] < minX {
+						minX = p[0]
+					}
+					if p[0] > maxX {
+						maxX = p[0]
+					}
+					if p[1] < minY {
+						minY = p[1]
+					}
+					if p[1] > maxY {
+						maxY = p[1]
+					}
 				}
-				if math.IsNaN(float64(point[1])) || math.IsInf(float64(point[1]), 0) {
-					t.Errorf("fitQuadrilateral() point[%d].y is invalid: %v", i, point[1])
+
+				// Expanded quad bounding box should be at least as big as polygon bbox
+				eMinX, eMinY := expanded[0][0], expanded[0][1]
+				eMaxX, eMaxY := expanded[0][0], expanded[0][1]
+				for _, p := range expanded {
+					if p[0] < eMinX {
+						eMinX = p[0]
+					}
+					if p[0] > eMaxX {
+						eMaxX = p[0]
+					}
+					if p[1] < eMinY {
+						eMinY = p[1]
+					}
+					if p[1] > eMaxY {
+						eMaxY = p[1]
+					}
+				}
+
+				tol := float32(2.0)
+				if eMinX > minX+tol || eMaxX < maxX-tol || eMinY > minY+tol || eMaxY < maxY-tol {
+					t.Errorf("expanded quad bbox [%.1f,%.1f]-[%.1f,%.1f] does not contain polygon bbox [%.1f,%.1f]-[%.1f,%.1f]",
+						eMinX, eMinY, eMaxX, eMaxY, minX, minY, maxX, maxY)
 				}
 			}
 		})
 	}
 }
 
-func TestExpandQuadrilateral(t *testing.T) {
-	tests := []struct {
-		name    string
-		quad    [4][2]float32
-		polygon [][2]float32
-	}{
-		{
-			name: "quad already contains polygon",
-			quad: [4][2]float32{{0, 0}, {10, 0}, {10, 10}, {0, 10}},
-			polygon: [][2]float32{
-				{5, 5},
-			},
-		},
-		{
-			name: "quad needs expansion",
-			quad: [4][2]float32{{2, 2}, {8, 2}, {8, 8}, {2, 8}},
-			polygon: [][2]float32{
-				{0, 0}, {10, 10}, // Points outside quad
-			},
-		},
-		{
-			name:    "empty polygon",
-			quad:    [4][2]float32{{0, 0}, {10, 0}, {10, 10}, {0, 10}},
-			polygon: [][2]float32{},
-		},
+func TestFitQuadrilateral_RealWorld(t *testing.T) {
+	polygon := [][2]float32{
+		{100, 100}, {105, 100}, {200, 105}, {205, 105},
+		{205, 200}, {200, 205}, {105, 205}, {100, 200},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := expandQuadrilateral(tt.quad, tt.polygon)
+	fitted, expanded := fitQuadrilateral(polygon)
 
-			// Verify result is valid
-			for i, point := range result {
-				if math.IsNaN(float64(point[0])) || math.IsInf(float64(point[0]), 0) {
-					t.Errorf("expandQuadrilateral() point[%d].x is invalid: %v", i, point[0])
-				}
-				if math.IsNaN(float64(point[1])) || math.IsInf(float64(point[1]), 0) {
-					t.Errorf("expandQuadrilateral() point[%d].y is invalid: %v", i, point[1])
-				}
+	// Both should be valid
+	for _, result := range [][4][2]float32{fitted, expanded} {
+		for i, point := range result {
+			if math.IsNaN(float64(point[0])) || math.IsInf(float64(point[0]), 0) {
+				t.Errorf("quad point[%d].x is invalid: %v", i, point[0])
 			}
-
-			// If polygon is not empty, verify all polygon points are inside or on the expanded quad
-			// This is a simplified check - full geometric containment check would be complex
-			if len(tt.polygon) > 0 {
-				// Find bounding box of result quad
-				minX, minY := result[0][0], result[0][1]
-				maxX, maxY := result[0][0], result[0][1]
-				for _, point := range result {
-					if point[0] < minX {
-						minX = point[0]
-					}
-					if point[0] > maxX {
-						maxX = point[0]
-					}
-					if point[1] < minY {
-						minY = point[1]
-					}
-					if point[1] > maxY {
-						maxY = point[1]
-					}
-				}
-
-				// Check if polygon points are within bounding box (rough check)
-				for _, point := range tt.polygon {
-					if point[0] < minX-1 || point[0] > maxX+1 || point[1] < minY-1 || point[1] > maxY+1 {
-						// Allow small tolerance for floating point
-						t.Logf("Warning: polygon point %v may be outside expanded quad bounding box [%v,%v] to [%v,%v]",
-							point, minX, minY, maxX, maxY)
-					}
-				}
+			if math.IsNaN(float64(point[1])) || math.IsInf(float64(point[1]), 0) {
+				t.Errorf("quad point[%d].y is invalid: %v", i, point[1])
 			}
-		})
+		}
 	}
+
+	// Fitted quad should have reasonable IoU with the polygon
+	fittedArea := quadArea(fitted)
+	if fittedArea < 1000 || fittedArea > 50000 {
+		t.Errorf("fitted quad area = %v, expected reasonable area for ~100x100 polygon", fittedArea)
+	}
+
+	_ = expanded // expanded is tested via bbox containment in main test
 }
 
 func TestConvexHull(t *testing.T) {
@@ -160,7 +149,7 @@ func TestConvexHull(t *testing.T) {
 			points: [][2]float32{
 				{0, 0}, {10, 0}, {10, 10}, {0, 10}, {5, 5},
 			},
-			wantSize: 4, // Interior point excluded
+			wantSize: 4,
 		},
 		{
 			name: "triangle",
@@ -174,7 +163,7 @@ func TestConvexHull(t *testing.T) {
 			points: [][2]float32{
 				{0, 0}, {5, 5}, {10, 10},
 			},
-			wantSize: -1, // Could be 2 or 3 depending on implementation
+			wantSize: -1,
 		},
 		{
 			name:     "empty",
@@ -205,7 +194,6 @@ func TestConvexHull(t *testing.T) {
 				t.Errorf("convexHull() returned %d points, want %d", len(result), tt.wantSize)
 			}
 
-			// Verify no NaN or Inf values
 			for i, point := range result {
 				if math.IsNaN(float64(point[0])) || math.IsInf(float64(point[0]), 0) {
 					t.Errorf("convexHull() point[%d].x is invalid: %v", i, point[0])
@@ -215,7 +203,6 @@ func TestConvexHull(t *testing.T) {
 				}
 			}
 
-			// Verify result length is not greater than input
 			if len(result) > len(tt.points) {
 				t.Errorf("convexHull() returned more points (%d) than input (%d)", len(result), len(tt.points))
 			}
@@ -223,88 +210,103 @@ func TestConvexHull(t *testing.T) {
 	}
 }
 
-func TestPointInQuad(t *testing.T) {
-	quad := [4][2]float32{
-		{0, 0}, {10, 0}, {10, 10}, {0, 10},
-	}
-
+func TestPolyArea(t *testing.T) {
 	tests := []struct {
-		name   string
-		point  [2]float32
-		expect bool
+		name string
+		pts  [][2]float64
+		want float64
 	}{
-		{"center", [2]float32{5, 5}, true},
-		{"on edge", [2]float32{0, 5}, true},
-		{"corner", [2]float32{0, 0}, true},
-		{"outside left", [2]float32{-1, 5}, false},
-		{"outside right", [2]float32{11, 5}, false},
-		{"outside top", [2]float32{5, -1}, false},
-		{"outside bottom", [2]float32{5, 11}, false},
+		{"unit square", [][2]float64{{0, 0}, {1, 0}, {1, 1}, {0, 1}}, 1.0},
+		{"10x10 square", [][2]float64{{0, 0}, {10, 0}, {10, 10}, {0, 10}}, 100.0},
+		{"triangle", [][2]float64{{0, 0}, {10, 0}, {5, 10}}, 50.0},
+		{"degenerate (line)", [][2]float64{{0, 0}, {10, 10}}, 0},
+		{"empty", nil, 0},
 	}
-
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := pointInQuad(tt.point, quad)
-			if result != tt.expect {
-				t.Errorf("pointInQuad(%v) = %v, want %v", tt.point, result, tt.expect)
+			got := polyArea(tt.pts)
+			if math.Abs(got-tt.want) > 1e-6 {
+				t.Errorf("polyArea() = %v, want %v", got, tt.want)
 			}
 		})
 	}
 }
 
-// Note: raySegmentIntersection is a complex internal function with specific
-// parameters (ox, oy, angle, a, b) that's difficult to test in isolation.
-// It's tested indirectly through fitQuadrilateral and pointInQuad tests.
+func TestPolyIoU(t *testing.T) {
+	square := [][2]float64{{0, 0}, {10, 0}, {10, 10}, {0, 10}}
+	squareArea := polyArea(square)
 
-func TestFitQuadrilateral_RealWorld(t *testing.T) {
-	// Test with a realistic QR code corner detection result
-	// Simulating a slightly rotated and distorted QR code
-	polygon := [][2]float32{
-		{100, 100}, {105, 100}, {200, 105}, {205, 105},
-		{205, 200}, {200, 205}, {105, 205}, {100, 200},
+	tests := []struct {
+		name    string
+		p1, p2  [][2]float64
+		p1Area  float64
+		wantMin float64
+		wantMax float64
+	}{
+		{
+			name:    "identical squares",
+			p1:      square,
+			p2:      square,
+			p1Area:  squareArea,
+			wantMin: 0.99,
+			wantMax: 1.01,
+		},
+		{
+			name:    "non-overlapping",
+			p1:      square,
+			p2:      [][2]float64{{20, 20}, {30, 20}, {30, 30}, {20, 30}},
+			p1Area:  squareArea,
+			wantMin: 0,
+			wantMax: 0.01,
+		},
+		{
+			name:    "50% overlap",
+			p1:      square,
+			p2:      [][2]float64{{5, 0}, {15, 0}, {15, 10}, {5, 10}},
+			p1Area:  squareArea,
+			wantMin: 0.30,
+			wantMax: 0.35,
+		},
 	}
-
-	result := fitQuadrilateral(polygon)
-
-	if len(result) != 4 {
-		t.Fatalf("fitQuadrilateral() returned %d points, want 4", len(result))
-	}
-
-	// Verify the quadrilateral roughly contains the original polygon's bounding box
-	minX, minY := polygon[0][0], polygon[0][1]
-	maxX, maxY := polygon[0][0], polygon[0][1]
-	for _, p := range polygon {
-		if p[0] < minX {
-			minX = p[0]
-		}
-		if p[0] > maxX {
-			maxX = p[0]
-		}
-		if p[1] < minY {
-			minY = p[1]
-		}
-		if p[1] > maxY {
-			maxY = p[1]
-		}
-	}
-
-	// Check quad contains approximate bounding box (with tolerance)
-	tolerance := float32(20.0)
-	for _, p := range result {
-		if p[0] < minX-tolerance || p[0] > maxX+tolerance ||
-			p[1] < minY-tolerance || p[1] > maxY+tolerance {
-			t.Logf("Quad point %v is significantly outside polygon bbox [%v,%v] to [%v,%v]",
-				p, minX, minY, maxX, maxY)
-		}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := polyIoU(tt.p1, tt.p2, tt.p1Area)
+			if got < tt.wantMin || got > tt.wantMax {
+				t.Errorf("polyIoU() = %v, want in [%v, %v]", got, tt.wantMin, tt.wantMax)
+			}
+		})
 	}
 }
 
-// Benchmark tests
+func TestNelderMead3(t *testing.T) {
+	// Minimize f(x,y,z) = (x-1)² + (y-2)² + (z-3)²
+	fn := func(p [3]float64) float64 {
+		return (p[0]-1)*(p[0]-1) + (p[1]-2)*(p[1]-2) + (p[2]-3)*(p[2]-3)
+	}
+
+	result := nelderMead3(fn, [3]float64{0, 0, 0}, 500)
+
+	tol := 0.01
+	if math.Abs(result[0]-1) > tol || math.Abs(result[1]-2) > tol || math.Abs(result[2]-3) > tol {
+		t.Errorf("nelderMead3 = %v, want approximately [1, 2, 3]", result)
+	}
+}
+
+// quadArea computes the area of a quadrilateral.
+func quadArea(q [4][2]float32) float32 {
+	pts := make([][2]float64, 4)
+	for i, p := range q {
+		pts[i] = [2]float64{float64(p[0]), float64(p[1])}
+	}
+	return float32(polyArea(pts))
+}
+
+// Benchmarks
+
 func BenchmarkFitQuadrilateral_Simple(b *testing.B) {
 	polygon := [][2]float32{
 		{0, 0}, {10, 0}, {10, 10}, {0, 10},
 	}
-
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		fitQuadrilateral(polygon)
@@ -320,7 +322,6 @@ func BenchmarkFitQuadrilateral_Complex(b *testing.B) {
 			float32(100 + 50*math.Sin(angle)),
 		}
 	}
-
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		fitQuadrilateral(polygon)
@@ -332,21 +333,8 @@ func BenchmarkConvexHull_10Points(b *testing.B) {
 	for i := 0; i < 10; i++ {
 		points[i] = [2]float32{float32(i * 10), float32(i * 5)}
 	}
-
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		convexHull(points)
-	}
-}
-
-func BenchmarkPointInQuad(b *testing.B) {
-	quad := [4][2]float32{
-		{0, 0}, {100, 0}, {100, 100}, {0, 100},
-	}
-	point := [2]float32{50, 50}
-
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		pointInQuad(point, quad)
 	}
 }
