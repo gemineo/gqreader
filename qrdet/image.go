@@ -189,6 +189,13 @@ func (i *ImageSource) Height() int {
 	return i.mat.Rows()
 }
 
+// Mat returns the underlying gocv.Mat.
+// The returned Mat is NOT a copy — do not close it separately.
+// Use this for advanced operations that need direct Mat access.
+func (i *ImageSource) Mat() gocv.Mat {
+	return i.mat
+}
+
 // toMat returns the internal gocv.Mat.
 // This is an internal method used by the detector, not part of the public API.
 func (i *ImageSource) toMat() gocv.Mat {
