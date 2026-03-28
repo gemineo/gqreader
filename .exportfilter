@@ -1,0 +1,22 @@
+# ================================
+# Export filter: privé -> public
+# ================================
+
+# --- INCLUDES (doivent être en premier) ---
+
+# Dotfiles explicitement autorisés
+.env_template
+
+# --- EXCLUDES ---
+
+# Tous les dotfiles par défaut
+.*
+
+# Fichiers strictement privés
+CLAUDE.md
+
+# Hiérarchie privée complète
+private/
+
+# (ajoute ici toute exclusion future)
+
