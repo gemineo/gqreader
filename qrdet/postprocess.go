@@ -2,7 +2,8 @@ package qrdet
 
 import (
 	"math"
-	"sort"
+
+	"gocv.io/x/gocv"
 
 	"github.com/gemineo/gqreader/internal/geometry"
 	"github.com/gemineo/gqreader/internal/mathutil"
@@ -65,8 +66,9 @@ func processOutput(
 		// Generate mask from coefficients and prototypes
 		mask := generateMask(raw.maskCoeffs[:], output1, raw.cx, raw.cy, raw.w, raw.h, info.targetSize)
 
-		// Extract polygon from mask
+		// Extract polygon from mask using FindContours
 		polygon := maskToPolygon(mask, raw.cx, raw.cy, raw.w, raw.h, info.targetSize)
+		mask.Close()
 
 		// Transform coordinates to original image space
 		x1, y1 := info.transformCoordinates(raw.cx-raw.w/2, raw.cy-raw.h/2)
@@ -148,7 +150,11 @@ func parseOutput0(output0 []float32, confThreshold float32) []rawDetection {
 }
 
 // generateMask creates a binary mask from mask coefficients and prototypes.
-// The mask is generated at prototype resolution (160x160) then cropped to the bbox.
+// The mask is returned as a CV_8UC1 Mat at prototype resolution, cropped to the bbox.
+// Pixels where sigmoid(coeff @ proto) > 0.5 are set to 255, others to 0.
+//
+// The caller must close the returned Mat.
+// An empty Mat is returned if the bbox has no valid area.
 //
 // Formula: mask = sigmoid(coefficients @ prototypes) > 0.5
 func generateMask(
@@ -156,7 +162,7 @@ func generateMask(
 	prototypes []float32,
 	cx, cy, w, h float32,
 	inputSize int,
-) [][]bool {
+) gocv.Mat {
 	protoSize := modelPrototypeSize // 160
 
 	// Scale factor from input size to prototype size
@@ -170,17 +176,15 @@ func generateMask(
 
 	// Ensure valid dimensions
 	if x2 <= x1 || y2 <= y1 {
-		return nil
+		return gocv.NewMat()
 	}
 
 	maskWidth := x2 - x1
 	maskHeight := y2 - y1
 
-	// Create mask
-	mask := make([][]bool, maskHeight)
-	for i := range mask {
-		mask[i] = make([]bool, maskWidth)
-	}
+	// Create mask as CV_8UC1
+	mask := gocv.NewMatWithSize(maskHeight, maskWidth, gocv.MatTypeCV8UC1)
+	maskPtr, _ := mask.DataPtrUint8()
 
 	// Compute mask values: sum(coeffs[i] * prototypes[i][y][x]) for each pixel
 	for dy := 0; dy < maskHeight; dy++ {
@@ -197,22 +201,26 @@ func generateMask(
 			}
 
 			// Apply sigmoid and threshold
-			mask[dy][dx] = sigmoid(value) > 0.5
+			if sigmoid(value) > 0.5 {
+				maskPtr[dy*maskWidth+dx] = 255
+			}
 		}
 	}
 
 	return mask
 }
 
-// maskToPolygon extracts contour points from a binary mask.
+// maskToPolygon extracts contour points from a binary mask using OpenCV's FindContours.
+// This matches Python's cv2.findContours(RETR_EXTERNAL, CHAIN_APPROX_SIMPLE) as used by
+// Ultralytics' mask.xy[0] accessor for segmentation polygon extraction.
+//
 // Returns points in model input space (640x640).
 func maskToPolygon(
-	mask [][]bool,
+	mask gocv.Mat,
 	cx, cy, w, h float32,
 	inputSize int,
 ) [][2]float32 {
-	if mask == nil || len(mask) == 0 {
-		// Return bbox corners as fallback polygon
+	bboxFallback := func() [][2]float32 {
 		halfW := w / 2
 		halfH := h / 2
 		return [][2]float32{
@@ -223,89 +231,53 @@ func maskToPolygon(
 		}
 	}
 
-	// Extract contour points using simple edge detection
+	if mask.Empty() {
+		return bboxFallback()
+	}
+
+	// Find contours — same algorithm as Python's cv2.findContours
+	contours := gocv.FindContours(mask, gocv.RetrievalExternal, gocv.ChainApproxSimple)
+	defer contours.Close()
+
+	if contours.Size() == 0 {
+		return bboxFallback()
+	}
+
+	// Select the largest contour by area (Python's mask.xy[0] takes the primary mask contour)
+	largestIdx := 0
+	if contours.Size() > 1 {
+		largestArea := 0.0
+		for i := 0; i < contours.Size(); i++ {
+			area := gocv.ContourArea(contours.At(i))
+			if area > largestArea {
+				largestArea = area
+				largestIdx = i
+			}
+		}
+	}
+
+	contour := contours.At(largestIdx)
+	if contour.Size() < 3 {
+		return bboxFallback()
+	}
+
+	// Transform contour points from mask space (cropped bbox in prototype space)
+	// back to model input space (640x640)
 	protoSize := modelPrototypeSize
 	scale := float32(protoSize) / float32(inputSize)
-
-	// Calculate bbox offset in prototype space
 	offsetX := (cx - w/2) * scale
 	offsetY := (cy - h/2) * scale
-
-	// Scale back to input space
 	invScale := float32(inputSize) / float32(protoSize)
 
-	// Simple contour extraction: find edge pixels
-	contourPoints := make([][2]float32, 0, 100)
-
-	maskHeight := len(mask)
-	maskWidth := len(mask[0])
-
-	for y := 0; y < maskHeight; y++ {
-		for x := 0; x < maskWidth; x++ {
-			if !mask[y][x] {
-				continue
-			}
-
-			// Check if this is an edge pixel (has at least one non-mask neighbor)
-			isEdge := false
-			for dy := -1; dy <= 1; dy++ {
-				for dx := -1; dx <= 1; dx++ {
-					ny, nx := y+dy, x+dx
-					if ny < 0 || ny >= maskHeight || nx < 0 || nx >= maskWidth {
-						isEdge = true
-						break
-					}
-					if !mask[ny][nx] {
-						isEdge = true
-						break
-					}
-				}
-				if isEdge {
-					break
-				}
-			}
-
-			if isEdge {
-				// Convert to input space coordinates
-				px := (float32(x) + offsetX) * invScale
-				py := (float32(y) + offsetY) * invScale
-				contourPoints = append(contourPoints, [2]float32{px, py})
-			}
-		}
+	points := make([][2]float32, contour.Size())
+	for i := 0; i < contour.Size(); i++ {
+		p := contour.At(i)
+		px := (float32(p.X) + offsetX) * invScale
+		py := (float32(p.Y) + offsetY) * invScale
+		points[i] = [2]float32{px, py}
 	}
 
-	if len(contourPoints) < 3 {
-		// Return bbox corners as fallback
-		halfW := w / 2
-		halfH := h / 2
-		return [][2]float32{
-			{cx - halfW, cy - halfH},
-			{cx + halfW, cy - halfH},
-			{cx + halfW, cy + halfH},
-			{cx - halfW, cy + halfH},
-		}
-	}
-
-	// Sort points by angle from centroid (for proper polygon ordering)
-	centroidX, centroidY := computeCentroid(contourPoints)
-	sort.Slice(contourPoints, func(i, j int) bool {
-		angleI := math.Atan2(float64(contourPoints[i][1]-centroidY), float64(contourPoints[i][0]-centroidX))
-		angleJ := math.Atan2(float64(contourPoints[j][1]-centroidY), float64(contourPoints[j][0]-centroidX))
-		return angleI < angleJ
-	})
-
-	return contourPoints
-}
-
-// computeCentroid calculates the centroid of a set of points.
-func computeCentroid(points [][2]float32) (float32, float32) {
-	var sumX, sumY float32
-	for _, p := range points {
-		sumX += p[0]
-		sumY += p[1]
-	}
-	n := float32(len(points))
-	return sumX / n, sumY / n
+	return points
 }
 
 // buildDetection creates a Detection struct with all coordinate variants.
