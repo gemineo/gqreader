@@ -134,7 +134,7 @@ func (f *FastNlMeansDenoising) Apply(src gocv.Mat) (gocv.Mat, error) {
 	}()
 
 	dst := gocv.NewMat()
-	gocv.FastNlMeansDenoising(gray, &dst, f.h())
+	gocv.FastNlMeansDenoisingWithParams(gray, &dst, f.h(), 7, 21)
 	return dst, nil
 }
 
@@ -288,7 +288,7 @@ func (a *AdaptiveThreshold) Apply(src gocv.Mat) (gocv.Mat, error) {
 	}
 
 	dst := gocv.NewMat()
-	gocv.AdaptiveThreshold(gray, &dst, 255, method, gocv.ThresholdBinary, a.blockSize(), a.c())
+	gocv.AdaptiveThreshold(gray, &dst, 255, method, gocv.ThresholdBinary, a.blockSize(), float32(a.c()))
 	return dst, nil
 }
 
@@ -531,9 +531,6 @@ func median(values []float64) float64 {
 // ============================================================================
 // Channel Extraction
 // ============================================================================
-
-// Ensure RotationSearch implements VariantGenerator.
-var _ VariantGenerator = (*RotationSearch)(nil)
 
 // Ensure RotationSearch implements VariantGenerator.
 var _ VariantGenerator = (*RotationSearch)(nil)

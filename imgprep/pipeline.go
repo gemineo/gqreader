@@ -101,7 +101,7 @@ func (p *Pipeline[T]) Process(ctx context.Context, src gocv.Mat, detect DetectFu
 
 	var tasks []task
 	for _, s := range p.strategies {
-		if vg, ok := s.(VariantGenerator); ok {
+		if _, ok := s.(VariantGenerator); ok {
 			// Capture variants - we need to generate them during task execution
 			tasks = append(tasks, task{
 				strategy: s,

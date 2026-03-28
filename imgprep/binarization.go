@@ -83,7 +83,7 @@ func (s *SauvolaThreshold) Apply(src gocv.Mat) (gocv.Mat, error) {
 	// Calculate local mean using box filter
 	mean := gocv.NewMat()
 	defer mean.Close()
-	gocv.BoxFilter(floatImg, &mean, gocv.MatTypeCV32F, kSize)
+	gocv.BoxFilter(floatImg, &mean, int(gocv.MatTypeCV32F), kSize)
 
 	// Calculate local mean of squares
 	squared := gocv.NewMat()
@@ -92,7 +92,7 @@ func (s *SauvolaThreshold) Apply(src gocv.Mat) (gocv.Mat, error) {
 
 	meanSq := gocv.NewMat()
 	defer meanSq.Close()
-	gocv.BoxFilter(squared, &meanSq, gocv.MatTypeCV32F, kSize)
+	gocv.BoxFilter(squared, &meanSq, int(gocv.MatTypeCV32F), kSize)
 
 	// Calculate variance: E[X²] - E[X]²
 	meanSquared := gocv.NewMat()
@@ -103,10 +103,10 @@ func (s *SauvolaThreshold) Apply(src gocv.Mat) (gocv.Mat, error) {
 	defer variance.Close()
 	gocv.Subtract(meanSq, meanSquared, &variance)
 
-	// Calculate standard deviation
+	// Calculate standard deviation: sqrt(variance) = variance^0.5
 	stddev := gocv.NewMat()
 	defer stddev.Close()
-	gocv.Sqrt(variance, &stddev)
+	gocv.Pow(variance, 0.5, &stddev)
 
 	// Calculate Sauvola threshold: T = mean * (1 + k * (stddev/R - 1))
 	// Rearranged: T = mean + mean * k * (stddev/R - 1)
@@ -215,7 +215,7 @@ func (n *NiblackThreshold) Apply(src gocv.Mat) (gocv.Mat, error) {
 	// Calculate local mean
 	mean := gocv.NewMat()
 	defer mean.Close()
-	gocv.BoxFilter(floatImg, &mean, gocv.MatTypeCV32F, kSize)
+	gocv.BoxFilter(floatImg, &mean, int(gocv.MatTypeCV32F), kSize)
 
 	// Calculate local mean of squares
 	squared := gocv.NewMat()
@@ -224,7 +224,7 @@ func (n *NiblackThreshold) Apply(src gocv.Mat) (gocv.Mat, error) {
 
 	meanSq := gocv.NewMat()
 	defer meanSq.Close()
-	gocv.BoxFilter(squared, &meanSq, gocv.MatTypeCV32F, kSize)
+	gocv.BoxFilter(squared, &meanSq, int(gocv.MatTypeCV32F), kSize)
 
 	// Variance and stddev
 	meanSquared := gocv.NewMat()
@@ -237,7 +237,7 @@ func (n *NiblackThreshold) Apply(src gocv.Mat) (gocv.Mat, error) {
 
 	stddev := gocv.NewMat()
 	defer stddev.Close()
-	gocv.Sqrt(variance, &stddev)
+	gocv.Pow(variance, 0.5, &stddev)
 
 	// Niblack threshold: T = mean + k * stddev
 	rows := floatImg.Rows()
@@ -326,7 +326,7 @@ func (w *WolfThreshold) Apply(src gocv.Mat) (gocv.Mat, error) {
 	// Calculate local mean
 	mean := gocv.NewMat()
 	defer mean.Close()
-	gocv.BoxFilter(floatImg, &mean, gocv.MatTypeCV32F, kSize)
+	gocv.BoxFilter(floatImg, &mean, int(gocv.MatTypeCV32F), kSize)
 
 	// Calculate local mean of squares
 	squared := gocv.NewMat()
@@ -335,7 +335,7 @@ func (w *WolfThreshold) Apply(src gocv.Mat) (gocv.Mat, error) {
 
 	meanSq := gocv.NewMat()
 	defer meanSq.Close()
-	gocv.BoxFilter(squared, &meanSq, gocv.MatTypeCV32F, kSize)
+	gocv.BoxFilter(squared, &meanSq, int(gocv.MatTypeCV32F), kSize)
 
 	// Variance and stddev
 	meanSquared := gocv.NewMat()
@@ -348,7 +348,7 @@ func (w *WolfThreshold) Apply(src gocv.Mat) (gocv.Mat, error) {
 
 	stddev := gocv.NewMat()
 	defer stddev.Close()
-	gocv.Sqrt(variance, &stddev)
+	gocv.Pow(variance, 0.5, &stddev)
 
 	// Find global min gray and max stddev
 	rows := floatImg.Rows()
