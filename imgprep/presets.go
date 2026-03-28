@@ -242,3 +242,30 @@ func (r *rotationWithPreprocess) Variants(src gocv.Mat) iter.Seq2[string, gocv.M
 
 // Ensure rotationWithPreprocess implements VariantGenerator.
 var _ VariantGenerator = (*rotationWithPreprocess)(nil)
+
+// QRDecodeStrategies returns preprocessing strategies optimized for QR code decoding.
+// These match the flavor pipeline used by Python QReader's decode loop:
+//   - identity (original image, no preprocessing)
+//   - inversion (bitwise NOT)
+//   - grayscale → Otsu → GaussianBlur(5)
+//   - sharpen → grayscale → GaussianBlur(3)
+func QRDecodeStrategies() []Strategy {
+	return []Strategy{
+		NewStrategyFunc("identity", func(src gocv.Mat) (gocv.Mat, error) {
+			dst := gocv.NewMat()
+			src.CopyTo(&dst)
+			return dst, nil
+		}),
+		&Inversion{},
+		NewCompositeStrategy("gray_otsu_blur",
+			&Grayscale{},
+			&OtsuThreshold{},
+			&GaussianBlur{KernelSize: 5},
+		),
+		NewCompositeStrategy("sharpen_gray_blur",
+			&Sharpen{},
+			&Grayscale{},
+			&GaussianBlur{KernelSize: 3},
+		),
+	}
+}
