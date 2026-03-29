@@ -319,6 +319,63 @@ func BenchmarkDatasetMinimal(b *testing.B) {
 	b.ReportMetric(float64(len(imagePaths)), "images/op")
 }
 
+// BenchmarkDatasetZBar measures end-to-end throughput using the ZBar decoder
+// (libzbar) instead of OpenCV QRCodeDetector.
+// ZBar is the same decoder used by Python QReader (pyzbar) and is typically
+// 3-5× faster per decode attempt.
+//
+// Run with:
+//
+//	go test -tags integration -bench=BenchmarkDatasetZBar -benchmem -benchtime=3x .
+func BenchmarkDatasetZBar(b *testing.B) {
+	imagePaths := collectImagePaths(b)
+
+	r, err := gqreader.NewFromFile(modelPath, gqreader.ZBarConfig())
+	if err != nil {
+		b.Skipf("ZBar decoder unavailable: %v", err)
+	}
+	defer r.Close()
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		for _, path := range imagePaths {
+			if _, err := r.DetectAndDecodeFile(path); err != nil {
+				b.Errorf("DetectAndDecodeFile(%s): %v", path, err)
+			}
+		}
+	}
+	b.ReportMetric(float64(len(imagePaths)), "images/op")
+}
+
+// BenchmarkDatasetZBarCoreML combines ZBar decoder with CoreML inference provider.
+// This stacks both optimizations: fast inference (CoreML) + fast decode (ZBar).
+func BenchmarkDatasetZBarCoreML(b *testing.B) {
+	imagePaths := collectImagePaths(b)
+
+	cfg := gqreader.ZBarConfig()
+	cfg.DetectionConfig = cfg.DetectionConfig.WithProvider(qrdet.CoreMLProviderConfig())
+	r, err := gqreader.NewFromFile(modelPath, cfg)
+	if err != nil {
+		b.Skipf("ZBar+CoreML unavailable: %v", err)
+	}
+	defer r.Close()
+
+	// Warm up CoreML JIT compilation.
+	if len(imagePaths) > 0 {
+		_, _ = r.DetectAndDecodeFile(imagePaths[0])
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		for _, path := range imagePaths {
+			if _, err := r.DetectAndDecodeFile(path); err != nil {
+				b.Errorf("DetectAndDecodeFile(%s): %v", path, err)
+			}
+		}
+	}
+	b.ReportMetric(float64(len(imagePaths)), "images/op")
+}
+
 // BenchmarkDatasetCoreML measures end-to-end throughput using the CoreML execution
 // provider with all compute units (CPU + GPU + Neural Engine).
 // Compare against BenchmarkDataset to quantify the hardware acceleration gain.

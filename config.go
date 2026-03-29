@@ -34,6 +34,8 @@ type Config struct {
 }
 
 // DefaultConfig returns the default configuration matching Python QReader's full pipeline.
+// Uses OpenCV QRCodeDetector for maximum portability.
+// For better performance, use ZBarConfig() if libzbar is available.
 func DefaultConfig() Config {
 	return Config{
 		DetectionConfig: qrdet.DefaultConfig(),
@@ -41,6 +43,22 @@ func DefaultConfig() Config {
 		TryPerspective:  true,
 		MaxWorkers:      0,
 		DecoderFactory:  func() (qrdecode.Decoder, error) { return qrdecode.NewOpenCVDecoder() },
+	}
+}
+
+// ZBarConfig returns the default pipeline using libzbar as the QR decoder.
+// ZBar is typically 3-5× faster than OpenCV QRCodeDetector and is the same
+// library used by Python QReader (pyzbar). Requires libzbar:
+//
+//	macOS:  brew install zbar
+//	Linux:  apt-get install libzbar-dev
+func ZBarConfig() Config {
+	return Config{
+		DetectionConfig: qrdet.DefaultConfig(),
+		ScaleFactors:    []float64{0.5, 2, 0.25, 3, 4},
+		TryPerspective:  true,
+		MaxWorkers:      0,
+		DecoderFactory:  func() (qrdecode.Decoder, error) { return qrdecode.NewZBarDecoder() },
 	}
 }
 
