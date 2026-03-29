@@ -183,15 +183,70 @@ func buildSessionOptions(pc ProviderConfig) (*ort.SessionOptions, error) {
 		return nil, fmt.Errorf("failed to set memory pattern: %w", err)
 	}
 
-	// Execution provider: CoreML is appended before the default CPU fallback.
+	// Execution provider: the selected EP is appended first; ORT falls back to CPU
+	// automatically when the EP is unavailable at runtime.
 	switch pc.Provider {
 	case ProviderCoreML:
 		if err := options.AppendExecutionProviderCoreMLV2(pc.CoreMLOptions); err != nil {
 			options.Destroy()
 			return nil, fmt.Errorf("failed to append CoreML provider: %w", err)
 		}
+
+	case ProviderCUDA:
+		cudaOpts, err := ort.NewCUDAProviderOptions()
+		if err != nil {
+			options.Destroy()
+			return nil, fmt.Errorf("failed to create CUDA provider options: %w", err)
+		}
+		if len(pc.CUDAOptions) > 0 {
+			if err := cudaOpts.Update(pc.CUDAOptions); err != nil {
+				cudaOpts.Destroy()
+				options.Destroy()
+				return nil, fmt.Errorf("failed to update CUDA provider options: %w", err)
+			}
+		}
+		appendErr := options.AppendExecutionProviderCUDA(cudaOpts)
+		cudaOpts.Destroy()
+		if appendErr != nil {
+			options.Destroy()
+			return nil, fmt.Errorf("failed to append CUDA provider: %w", appendErr)
+		}
+
+	case ProviderTensorRT:
+		trtOpts, err := ort.NewTensorRTProviderOptions()
+		if err != nil {
+			options.Destroy()
+			return nil, fmt.Errorf("failed to create TensorRT provider options: %w", err)
+		}
+		if len(pc.TensorRTOptions) > 0 {
+			if err := trtOpts.Update(pc.TensorRTOptions); err != nil {
+				trtOpts.Destroy()
+				options.Destroy()
+				return nil, fmt.Errorf("failed to update TensorRT provider options: %w", err)
+			}
+		}
+		appendErr := options.AppendExecutionProviderTensorRT(trtOpts)
+		trtOpts.Destroy()
+		if appendErr != nil {
+			options.Destroy()
+			return nil, fmt.Errorf("failed to append TensorRT provider: %w", appendErr)
+		}
+
+	case ProviderDirectML:
+		if err := options.AppendExecutionProviderDirectML(pc.DirectMLDeviceID); err != nil {
+			options.Destroy()
+			return nil, fmt.Errorf("failed to append DirectML provider: %w", err)
+		}
+
+	case ProviderOpenVINO:
+		if err := options.AppendExecutionProviderOpenVINO(pc.OpenVINOOptions); err != nil {
+			options.Destroy()
+			return nil, fmt.Errorf("failed to append OpenVINO provider: %w", err)
+		}
+
 	case ProviderCPU:
 		// CPU is always the ORT fallback; nothing to configure explicitly.
+
 	default:
 		options.Destroy()
 		return nil, fmt.Errorf("unsupported execution provider: %d", pc.Provider)

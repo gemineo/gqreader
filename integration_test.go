@@ -47,7 +47,12 @@ func envOrDefault(key, defaultVal string) string {
 
 func TestMain(m *testing.M) {
 	readerOnce.Do(func() {
-		sharedReader, readerErr = gqreader.NewFromFile(modelPath, gqreader.DefaultConfig())
+		// QREADER_PROVIDER selects the execution provider for the shared reader
+		// used by tests and BenchmarkDataset. Other provider benchmarks create
+		// their own readers.
+		cfg := gqreader.DefaultConfig()
+		cfg.DetectionConfig = cfg.DetectionConfig.WithProvider(qrdet.ProviderFromEnv())
+		sharedReader, readerErr = gqreader.NewFromFile(modelPath, cfg)
 	})
 	if readerErr != nil {
 		fmt.Fprintf(os.Stderr, "SKIP: QReader init failed: %v\n", readerErr)

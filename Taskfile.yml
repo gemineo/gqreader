@@ -129,12 +129,22 @@ tasks:
       - go test -tags integration -bench=. -benchmem -benchtime={{.BENCH_TIME}} -run=^$ ./...
 
   bench-providers:
-    desc: Compare all execution providers (CPU, CoreML ALL, CoreML NE, CoreML GPU)
+    desc: Compare all execution providers (CPU, CoreML ALL, CoreML CPU, CoreML GPU)
     deps: [model]
     vars:
       BENCH_TIME: '{{.BENCH_TIME | default "3x"}}'
     cmds:
       - go test -tags integration -bench="^BenchmarkDataset" -benchmem -benchtime={{.BENCH_TIME}} -run=^$ ./...
+
+  bench-env:
+    desc: "Benchmark using QREADER_PROVIDER env var (e.g. QREADER_PROVIDER=coreml task bench-env)"
+    desc: "Providers: cpu (default), coreml, cuda, tensorrt, directml, openvino"
+    deps: [model]
+    vars:
+      BENCH_TIME: '{{.BENCH_TIME | default "3x"}}'
+      PROVIDER: '{{.QREADER_PROVIDER | default "cpu"}}'
+    cmds:
+      - QREADER_PROVIDER={{.PROVIDER}} go test -tags integration -bench="^BenchmarkDataset$" -benchmem -benchtime={{.BENCH_TIME}} -run=^$ ./...
 
   # ---------------------------------------------------------------------------
   # Development

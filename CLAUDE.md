@@ -289,8 +289,56 @@ robustness on real-world images.
 105 ms/image but drops accuracy by 41 pp (88.9% → 47.5%), confirming the preprocessing pipeline
 is the core value-add of the library.
 
-**Latency**: gqreader (256 ms) is currently slower than Python QReader (159 ms). The likely
-cause is that Python QReader's ultralytics backend uses Apple MPS (Metal Performance Shaders)
-automatically on Apple Silicon, while `yalue/onnxruntime_go` defaults to the CPU execution
-provider. Enabling the CoreML execution provider in ONNX Runtime would be the path to close
-this gap on macOS/Apple Silicon.
+**Latency (updated 2026-03-29)**: CoreML execution provider brings gqreader to near-parity
+with Python. See provider benchmarks below.
+
+## Execution Provider Benchmarks (2026-03-29)
+
+Measured on Apple M3 Pro, Dataset-QR-2020 (99 images), `feat/onnx-optimization` branch.
+Run with: `task bench-providers` or `QREADER_PROVIDER=coreml task bench-env`.
+
+| Provider | ms/image | Δ vs CPU | Notes |
+|----------|----------|----------|-------|
+| CPU (ORT_ENABLE_ALL) | 260 ms | baseline | Default, all platforms |
+| CoreML CPU-only | 201 ms | −23% | CoreML graph compilation gain only |
+| CoreML CPU+GPU | 169 ms | −35% | GPU offload on top |
+| **CoreML ALL** | **170 ms** | **−35%** | Best on Apple Silicon |
+| MinimalConfig CPU | 151 ms | −42% | No scaling/perspective (−41pp accuracy) |
+| **Python QReader** | **159 ms** | target | ultralytics + Apple MPS |
+
+**Conclusion**: CoreML ALL closes 35% of the latency gap (260→170 ms). The remaining 11 ms
+gap vs Python lives in pre/postprocessing (numpy SIMD in Python vs Go scalar loops).
+Accuracy is unchanged by provider selection.
+
+### Provider Architecture (Cross-Platform)
+
+`qrdet.ProviderConfig` abstracts all ONNX Runtime execution providers. The `ProviderFromEnv()`
+function enables hardware-adaptive deployments via `QREADER_PROVIDER`:
+
+| Platform | Recommended Provider | `QREADER_PROVIDER` value |
+|----------|---------------------|--------------------------|
+| macOS (Apple Silicon) | `CoreMLProviderConfig()` | `coreml` |
+| Linux (NVIDIA GPU) | `CUDAProviderConfig()` | `cuda` |
+| Linux (NVIDIA, max perf) | `TensorRTProviderConfig()` | `tensorrt` |
+| Linux (Intel CPU/GPU) | `OpenVINOProviderConfig()` | `openvino` |
+| Windows (any GPU) | `DirectMLProviderConfig()` | `directml` |
+| All (portable fallback) | `CPUProviderConfig()` | `cpu` |
+
+**CoreML is macOS-only** (Apple framework). On Linux/Windows, the equivalent is CUDA (NVIDIA)
+or DirectML (Windows/AMD). ONNX Runtime falls back to CPU silently if an EP is unavailable.
+
+### ORT Build Requirements per Provider
+
+Not all ONNX Runtime distributions include all execution providers:
+
+| Provider | Homebrew ORT 1.24.x | Official ORT binary | Notes |
+|----------|--------------------|--------------------|-------|
+| CPU | ✅ | ✅ | Always available |
+| CoreML | ✅ (macOS only) | ✅ | CoreML.framework required |
+| CUDA | ❌ | ✅ (separate pkg) | CUDA toolkit required |
+| TensorRT | ❌ | ✅ (separate pkg) | TensorRT + CUDA required |
+| DirectML | ❌ (Windows only) | ✅ | Windows only |
+| OpenVINO | ❌ | ✅ (separate pkg) | Intel OpenVINO runtime required |
+
+**Note**: `"CPUAndNE"` (Neural Engine only) is absent from ORT 1.24.x builds. Valid
+CoreML `MLComputeUnits` values: `"All"`, `"CPUAndGPU"`, `"CPUOnly"`.
