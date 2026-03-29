@@ -233,7 +233,6 @@ func (r *rotationWithPreprocess) Variants(src gocv.Mat) iter.Seq2[string, gocv.M
 			}
 
 			if !yield(variantName, processed) {
-				processed.Close()
 				return
 			}
 		}

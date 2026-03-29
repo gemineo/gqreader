@@ -84,7 +84,6 @@ func (s *ScaleVariants) Variants(src gocv.Mat) iter.Seq2[string, gocv.Mat] {
 
 			name := fmt.Sprintf("scale_%.2f", factor)
 			if !yield(name, dst) {
-				dst.Close()
 				return
 			}
 		}

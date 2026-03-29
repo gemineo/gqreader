@@ -394,7 +394,6 @@ func (r *RotationSearch) Variants(src gocv.Mat) iter.Seq2[string, gocv.Mat] {
 			rotated := rotateImage(src, angle)
 			name := fmt.Sprintf("rot_%.1f", angle)
 			if !yield(name, rotated) {
-				rotated.Close()
 				return
 			}
 		}
