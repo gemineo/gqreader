@@ -62,6 +62,24 @@ This project accepts CGO dependencies for:
 
 CGO is preferred over Docker/Python microservices for performance and deployment simplicity.
 
+**The design goal is to eliminate the Python/Docker runtime, not to eliminate CGO.** A binary
+that links against `libonnxruntime` and `libopencv` is far simpler to deploy than a Python
+environment with torch, ultralytics, qrdet, etc. Users install two system libraries
+(`brew install onnxruntime opencv`) and ship a single binary.
+
+### Why ONNX Runtime and Not PyTorch
+
+PyTorch has no native Go bindings. The only options for running a `.pt` model in Go are:
+
+| Option | Verdict |
+|--------|---------|
+| Native PyTorch (Python subprocess) | Reintroduces the Python dependency — defeats the purpose |
+| LibTorch (PyTorch C++ frontend via CGO) | 2 GB+ install, complex CGO integration, Anthropic explicitly ruled it out |
+| ONNX Runtime via CGO | ~50 MB, stable C API, clean Go wrapper (`yalue/onnxruntime_go`), no PyTorch at runtime |
+
+ONNX is the only realistic choice. The model is exported once (Python, one-time step with
+`task model`) and ONNX Runtime handles inference in Go with no Python dependency.
+
 ## Implementation Strategy
 
 ### Phase 1: Image Preprocessing (Low complexity)
@@ -243,3 +261,36 @@ To support multiple barcode types, you would need to:
 3. **Model export validation**: Verify ONNX model produces same detections as PyTorch original
 4. **Post-processing fidelity**: NMS and bbox handling must match QRdet behavior
 5. **Model format awareness**: Keep track of single-class vs multi-class assumptions for future extensibility
+
+## Benchmark Baseline (2026-03-29)
+
+Measured on Dataset-QR-2020 (99 images, 595 QR codes). Full data in
+`../gqreader-benchmark/results/2026-03-29/`.
+
+| Tool | Images pass% | QR codes % | Avg ms/img |
+|------|-------------|-----------|-----------|
+| gqreader DefaultConfig | 88/99 (88.9%) | 526/595 (88.4%) | 256 ms |
+| gqreader MinimalConfig | 47/99 (47.5%) | 307/595 (51.6%) | 151 ms |
+| Python QReader (original) | 96/99 (97.0%) | 581/595 (97.6%) | 159 ms |
+| zbar standalone (no YOLO) | 86/99 (86.9%) | 241/595 (40.5%) | 45 ms |
+
+### Key Findings
+
+**Accuracy gap**: gqreader is 8.1 percentage points behind Python QReader (88.9% vs 97.0%).
+Only 3 images fail Python QReader (QR3e, QR3k, QR3q); these appear to be a realistic ceiling.
+Closing from 88.9% to ~97% is the short-term goal.
+
+**YOLO detection value proven**: zbar without YOLO detection scores 86.9% on images but only
+40.5% on QR codes and completely fails QR6 (damaged finder patterns, 0/6 images). Both gqreader
+and Python QReader pass all 6 QR6 images. The YOLO preprocessing step is essential for
+robustness on real-world images.
+
+**Preprocessing pipeline value**: removing scaling + perspective correction (MinimalConfig) saves
+105 ms/image but drops accuracy by 41 pp (88.9% → 47.5%), confirming the preprocessing pipeline
+is the core value-add of the library.
+
+**Latency**: gqreader (256 ms) is currently slower than Python QReader (159 ms). The likely
+cause is that Python QReader's ultralytics backend uses Apple MPS (Metal Performance Shaders)
+automatically on Apple Silicon, while `yalue/onnxruntime_go` defaults to the CPU execution
+provider. Enabling the CoreML execution provider in ONNX Runtime would be the path to close
+this gap on macOS/Apple Silicon.
