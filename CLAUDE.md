@@ -262,23 +262,38 @@ To support multiple barcode types, you would need to:
 4. **Post-processing fidelity**: NMS and bbox handling must match QRdet behavior
 5. **Model format awareness**: Keep track of single-class vs multi-class assumptions for future extensibility
 
-## Benchmark Baseline (2026-03-29)
+## Benchmark Baseline (2026-03-29, initial)
 
 Measured on Dataset-QR-2020 (99 images, 595 QR codes). Full data in
 `../gqreader-benchmark/results/2026-03-29/`.
 
 | Tool | Images pass% | QR codes % | Avg ms/img |
 |------|-------------|-----------|-----------|
-| gqreader DefaultConfig | 88/99 (88.9%) | 526/595 (88.4%) | 256 ms |
+| gqreader DefaultConfig (OpenCV decoder) | 88/99 (88.9%) | 526/595 (88.4%) | 256 ms |
 | gqreader MinimalConfig | 47/99 (47.5%) | 307/595 (51.6%) | 151 ms |
 | Python QReader (original) | 96/99 (97.0%) | 581/595 (97.6%) | 159 ms |
 | zbar standalone (no YOLO) | 86/99 (86.9%) | 241/595 (40.5%) | 45 ms |
 
+## Optimized Results (2026-03-29, feat/onnx-optimization)
+
+After ZBar decoder integration, CoreML EP, and generateMask 4.4× optimization:
+
+| Configuration | Images pass% | QR codes % | Avg ms/img | Notes |
+|--------------|-------------|-----------|-----------|-------|
+| CPU + OpenCV (baseline) | 88/99 (88.9%) | 526/595 (88.4%) | 256 ms | |
+| CPU + ZBar | 94/99 (94.9%) | 553/595 (92.9%) | 136 ms | +6pp accuracy, 1.9× faster |
+| CoreML ALL + ZBar | 94/99 (94.9%) | 553/595 (92.9%) | **33 ms** | **4.8× faster than Python** |
+| Python QReader | 96/99 (97.0%) | 581/595 (97.6%) | 159 ms | Target |
+
+**Gap to Python QReader**: narrowed from 8.1pp → 2.1pp with ZBar decoder.
+Remaining 2.1pp gap (QR2c, QR3c, QR3e, QR3k, QR3q): QR3e/k/q also fail Python;
+QR2c and QR3c are the two images where the preprocessing pipeline diverges.
+
 ### Key Findings
 
-**Accuracy gap**: gqreader is 8.1 percentage points behind Python QReader (88.9% vs 97.0%).
-Only 3 images fail Python QReader (QR3e, QR3k, QR3q); these appear to be a realistic ceiling.
-Closing from 88.9% to ~97% is the short-term goal.
+**ZBar vs OpenCV decoder**: switching from OpenCV QRCodeDetector to libzbar (same library as
+Python's pyzbar) recovers 6 images and 27 QR codes. One regression: QR2c passes with OpenCV
+but fails with ZBar — a decoder-specific difference for that image's encoding.
 
 **YOLO detection value proven**: zbar without YOLO detection scores 86.9% on images but only
 40.5% on QR codes and completely fails QR6 (damaged finder patterns, 0/6 images). Both gqreader
@@ -289,8 +304,10 @@ robustness on real-world images.
 105 ms/image but drops accuracy by 41 pp (88.9% → 47.5%), confirming the preprocessing pipeline
 is the core value-add of the library.
 
-**Latency (updated 2026-03-29)**: CoreML execution provider brings gqreader to near-parity
-with Python. See provider benchmarks below.
+**Latency**: CoreML + ZBar combination achieves 33 ms/img, 4.8× faster than Python QReader's
+159 ms/img (which uses Apple MPS via ultralytics + pyzbar). The speedup comes from two
+orthogonal improvements: CoreML offloads ONNX inference to GPU/ANE (35% faster inference),
+ZBar replaces OpenCV QRCodeDetector (3-5× faster per-crop decoding).
 
 ## Execution Provider Benchmarks (2026-03-29)
 

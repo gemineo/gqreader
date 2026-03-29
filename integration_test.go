@@ -50,7 +50,16 @@ func TestMain(m *testing.M) {
 		// QREADER_PROVIDER selects the execution provider for the shared reader
 		// used by tests and BenchmarkDataset. Other provider benchmarks create
 		// their own readers.
-		cfg := gqreader.DefaultConfig()
+		//
+		// QREADER_DECODER selects the QR decoder:
+		//   "zbar"   – libzbar (faster, same library as Python QReader)
+		//   "opencv" – OpenCV QRCodeDetector (default, no extra deps)
+		var cfg gqreader.Config
+		if os.Getenv("QREADER_DECODER") == "zbar" {
+			cfg = gqreader.ZBarConfig()
+		} else {
+			cfg = gqreader.DefaultConfig()
+		}
 		cfg.DetectionConfig = cfg.DetectionConfig.WithProvider(qrdet.ProviderFromEnv())
 		sharedReader, readerErr = gqreader.NewFromFile(modelPath, cfg)
 	})
