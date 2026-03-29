@@ -75,18 +75,13 @@ func preprocessImage(img gocv.Mat, targetSize int) ([]float32, *letterboxInfo, e
 	defer rgb.Close()
 	gocv.CvtColor(letterboxed, &rgb, gocv.ColorBGRToRGB)
 
-	// Convert to float32 and normalize to [0, 1]
+	// Convert to float32 in-place, then normalize to [0, 1].
 	floatImg := gocv.NewMat()
 	defer floatImg.Close()
 	rgb.ConvertTo(&floatImg, gocv.MatTypeCV32FC3)
-
-	// Normalize to [0, 1]
-	normalized := gocv.NewMat()
-	defer normalized.Close()
 	floatImg.DivideFloat(255.0)
 
-	// Get the float data
-	// OpenCV stores in HWC format, we need CHW for ONNX
+	// Rearrange from HWC (OpenCV) to CHW (ONNX).
 	data, err := matToCHW(floatImg)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to convert image to CHW: %w", err)

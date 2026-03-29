@@ -150,12 +150,13 @@ func parseOutput0(output0 []float32, confThreshold float32) []rawDetection {
 
 // generateMask creates a binary mask from mask coefficients and prototypes.
 // The mask is returned as a CV_8UC1 Mat at prototype resolution, cropped to the bbox.
-// Pixels where sigmoid(coeff @ proto) > 0.5 are set to 255, others to 0.
+// Pixels where (coeff @ proto) > 0 are set to 255, others to 0.
 //
 // The caller must close the returned Mat.
 // An empty Mat is returned if the bbox has no valid area.
 //
-// Formula: mask = sigmoid(coefficients @ prototypes) > 0.5
+// Formula: mask = (coefficients @ prototypes) > 0
+// Note: sigmoid(x) > 0.5 ↔ x > 0, so the sigmoid is elided.
 func generateMask(
 	coeffs []float32,
 	prototypes []float32,
@@ -164,16 +165,13 @@ func generateMask(
 ) gocv.Mat {
 	protoSize := modelPrototypeSize // 160
 
-	// Scale factor from input size to prototype size
 	scale := float32(protoSize) / float32(inputSize)
 
-	// Calculate bbox in prototype space
 	x1 := int(clamp32f((cx-w/2)*scale, 0, float32(protoSize-1)))
 	y1 := int(clamp32f((cy-h/2)*scale, 0, float32(protoSize-1)))
 	x2 := int(clamp32f((cx+w/2)*scale, 0, float32(protoSize-1)))
 	y2 := int(clamp32f((cy+h/2)*scale, 0, float32(protoSize-1)))
 
-	// Ensure valid dimensions
 	if x2 <= x1 || y2 <= y1 {
 		return gocv.NewMat()
 	}
@@ -181,28 +179,38 @@ func generateMask(
 	maskWidth := x2 - x1
 	maskHeight := y2 - y1
 
-	// Create mask as CV_8UC1
+	// Accumulate weighted prototypes into a pixel buffer.
+	//
+	// Loop order: channel → row → col.
+	// For a given channel c, the prototype row at (y1+dy) spans contiguous floats
+	// proto[c*(protoSize²) + (y1+dy)*protoSize + x1 .. x1+maskWidth].
+	// The innermost dx loop therefore accesses sequential memory, which is
+	// cache-friendly and allows the compiler to auto-vectorize the multiply-add.
+	//
+	// The original dy→dx→c order caused a stride of protoSize² (25 600 floats =
+	// 100 KB) between channel accesses — a cache miss on every coefficient step.
+	pixelSums := make([]float32, maskHeight*maskWidth)
+	for c := 0; c < modelMaskCoefficients; c++ {
+		coeff := coeffs[c]
+		if coeff == 0 {
+			continue
+		}
+		protoBase := c*protoSize*protoSize + y1*protoSize + x1
+		for dy := 0; dy < maskHeight; dy++ {
+			protoRow := protoBase + dy*protoSize
+			pixelRow := dy * maskWidth
+			for dx := 0; dx < maskWidth; dx++ {
+				pixelSums[pixelRow+dx] += coeff * prototypes[protoRow+dx]
+			}
+		}
+	}
+
+	// Threshold: sigmoid(x) > 0.5 ↔ x > 0, so we skip the sigmoid entirely.
 	mask := gocv.NewMatWithSize(maskHeight, maskWidth, gocv.MatTypeCV8UC1)
 	maskPtr, _ := mask.DataPtrUint8()
-
-	// Compute mask values: sum(coeffs[i] * prototypes[i][y][x]) for each pixel
-	for dy := 0; dy < maskHeight; dy++ {
-		py := y1 + dy
-		for dx := 0; dx < maskWidth; dx++ {
-			px := x1 + dx
-
-			// Sum over all prototype channels
-			var value float32
-			for c := 0; c < modelMaskCoefficients; c++ {
-				// prototypes layout: (1, 32, 160, 160) -> [c][y][x]
-				protoIdx := c*protoSize*protoSize + py*protoSize + px
-				value += coeffs[c] * prototypes[protoIdx]
-			}
-
-			// Apply sigmoid and threshold
-			if sigmoid(value) > 0.5 {
-				maskPtr[dy*maskWidth+dx] = 255
-			}
+	for i, v := range pixelSums {
+		if v > 0 {
+			maskPtr[i] = 255
 		}
 	}
 

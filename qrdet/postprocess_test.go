@@ -414,6 +414,53 @@ func TestGenerateMask_ZeroArea(t *testing.T) {
 	}
 }
 
+// BenchmarkGenerateMask measures mask generation for a typical detection.
+// This is the dominant CPU cost in postprocessing: a weighted sum of 32 prototype
+// channels over every pixel in the bounding box, followed by a per-pixel threshold.
+func BenchmarkGenerateMask(b *testing.B) {
+	protos := make([]float32, modelMaskCoefficients*modelPrototypeSize*modelPrototypeSize)
+	for i := range protos {
+		protos[i] = float32(i%13-6) * 0.1 // synthetic but non-trivial values
+	}
+	var coeffs [modelMaskCoefficients]float32
+	for i := range coeffs {
+		coeffs[i] = float32(i%7-3) * 0.2
+	}
+
+	// Typical mid-size QR code: roughly 25% of the 640×640 input area
+	cx, cy, w, h := float32(320), float32(320), float32(160), float32(160)
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		mask := generateMask(coeffs[:], protos, cx, cy, w, h, modelInputSize)
+		mask.Close()
+	}
+}
+
+// BenchmarkGenerateMask_Large measures mask generation for a large detection
+// (QR code spanning most of the frame).
+func BenchmarkGenerateMask_Large(b *testing.B) {
+	protos := make([]float32, modelMaskCoefficients*modelPrototypeSize*modelPrototypeSize)
+	for i := range protos {
+		protos[i] = float32(i%17-8) * 0.05
+	}
+	var coeffs [modelMaskCoefficients]float32
+	for i := range coeffs {
+		coeffs[i] = float32(i%5-2) * 0.3
+	}
+
+	// Large: 75% of frame
+	cx, cy, w, h := float32(320), float32(320), float32(480), float32(480)
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		mask := generateMask(coeffs[:], protos, cx, cy, w, h, modelInputSize)
+		mask.Close()
+	}
+}
+
 func BenchmarkBuildDetection(b *testing.B) {
 	polygon := [][2]float32{{10, 20}, {110, 20}, {110, 120}, {10, 120}}
 	quad := [4][2]float32{{10, 20}, {110, 20}, {110, 120}, {10, 120}}
