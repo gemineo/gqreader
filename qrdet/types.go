@@ -96,6 +96,11 @@ type Config struct {
 	// The model was trained with 640x640 images.
 	// Default: 640
 	InputSize int
+
+	// Provider configures the ONNX Runtime execution provider and session options.
+	// Use CPUProviderConfig() or CoreMLProviderConfig() to configure.
+	// The zero value selects CPU with full graph optimization.
+	Provider ProviderConfig
 }
 
 // DefaultConfig returns the default configuration matching Python QRdet.
@@ -105,6 +110,7 @@ func DefaultConfig() Config {
 		NMSIoUThreshold:     0.3,
 		MaxDetections:       100,
 		InputSize:           640,
+		Provider:            CPUProviderConfig(),
 	}
 }
 
@@ -123,6 +129,12 @@ func (c Config) WithNMSIoU(threshold float32) Config {
 // WithMaxDetections returns a copy of the config with the given max detections.
 func (c Config) WithMaxDetections(max int) Config {
 	c.MaxDetections = max
+	return c
+}
+
+// WithProvider returns a copy of the config with the given execution provider.
+func (c Config) WithProvider(p ProviderConfig) Config {
+	c.Provider = p
 	return c
 }
 

@@ -49,7 +49,7 @@ func NewDetectorFromFile(modelPath string, config Config) (*Detector, error) {
 		config.InputSize = modelInputSize
 	}
 
-	sess, err := newSessionFromFile(modelPath, config.InputSize)
+	sess, err := newSessionFromFile(modelPath, config.InputSize, config.Provider)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create session from file: %w", err)
 	}
@@ -66,7 +66,7 @@ func newDetectorFromData(modelData []byte, config Config) (*Detector, error) {
 		config.InputSize = modelInputSize
 	}
 
-	sess, err := newSession(modelData, config.InputSize)
+	sess, err := newSession(modelData, config.InputSize, config.Provider)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create session: %w", err)
 	}

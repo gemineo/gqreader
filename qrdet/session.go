@@ -17,7 +17,7 @@ type session struct {
 	inputTensor *ort.Tensor[float32]
 
 	// Output tensors
-	// output0: (1, 116, 8400) - predictions (bbox + class + mask coefficients)
+	// output0: (1, 37, 8400) - predictions (bbox + confidence + mask coefficients)
 	// output1: (1, 32, 160, 160) - prototype masks
 	output0 *ort.Tensor[float32]
 	output1 *ort.Tensor[float32]
@@ -31,74 +31,49 @@ type session struct {
 }
 
 // newSession creates a new ONNX session from model data.
-// The model data should be a valid ONNX model exported from YOLOv8-seg.
-func newSession(modelData []byte, inputSize int) (*session, error) {
-	// Initialize ONNX Runtime if not already done
+func newSession(modelData []byte, inputSize int, pc ProviderConfig) (*session, error) {
 	if err := initONNXRuntime(); err != nil {
 		return nil, fmt.Errorf("failed to initialize ONNX Runtime: %w", err)
 	}
 
-	s := &session{
-		inputSize: inputSize,
-	}
+	s := &session{inputSize: inputSize}
 
-	// Define expected shapes
 	s.inputShape = ort.Shape{1, 3, int64(inputSize), int64(inputSize)}
 	s.output0Shape = ort.Shape{1, modelOutputChannels, modelOutputPredictions}
 	s.output1Shape = ort.Shape{1, modelMaskCoefficients, modelPrototypeSize, modelPrototypeSize}
 
-	// Allocate input tensor
-	inputData := make([]float32, 1*3*inputSize*inputSize)
 	var err error
-	s.inputTensor, err = ort.NewTensor(s.inputShape, inputData)
+	s.inputTensor, err = ort.NewTensor(s.inputShape, make([]float32, 1*3*inputSize*inputSize))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create input tensor: %w", err)
 	}
 
-	// Allocate output tensors
-	output0Data := make([]float32, 1*modelOutputChannels*modelOutputPredictions)
-	s.output0, err = ort.NewTensor(s.output0Shape, output0Data)
+	s.output0, err = ort.NewTensor(s.output0Shape, make([]float32, 1*modelOutputChannels*modelOutputPredictions))
 	if err != nil {
 		s.inputTensor.Destroy()
 		return nil, fmt.Errorf("failed to create output0 tensor: %w", err)
 	}
 
-	output1Data := make([]float32, 1*modelMaskCoefficients*modelPrototypeSize*modelPrototypeSize)
-	s.output1, err = ort.NewTensor(s.output1Shape, output1Data)
+	s.output1, err = ort.NewTensor(s.output1Shape, make([]float32, 1*modelMaskCoefficients*modelPrototypeSize*modelPrototypeSize))
 	if err != nil {
 		s.inputTensor.Destroy()
 		s.output0.Destroy()
 		return nil, fmt.Errorf("failed to create output1 tensor: %w", err)
 	}
 
-	// Create session options
-	options, err := ort.NewSessionOptions()
+	options, err := buildSessionOptions(pc)
 	if err != nil {
 		s.cleanup()
-		return nil, fmt.Errorf("failed to create session options: %w", err)
+		return nil, err
 	}
 	defer options.Destroy()
 
-	// Set number of threads for CPU inference
-	numThreads := runtime.NumCPU()
-	if numThreads > 4 {
-		numThreads = 4 // Cap at 4 for reasonable memory usage
-	}
-	if err := options.SetIntraOpNumThreads(numThreads); err != nil {
-		s.cleanup()
-		return nil, fmt.Errorf("failed to set intra-op threads: %w", err)
-	}
-
-	// Create the ONNX session
-	inputs := []ort.ArbitraryTensor{s.inputTensor}
-	outputs := []ort.ArbitraryTensor{s.output0, s.output1}
-
 	s.ortSession, err = ort.NewAdvancedSessionWithONNXData(
 		modelData,
-		[]string{"images"},             // Input names (YOLOv8 default)
-		[]string{"output0", "output1"}, // Output names (YOLOv8-seg default)
-		inputs,
-		outputs,
+		[]string{"images"},
+		[]string{"output0", "output1"},
+		[]ort.ArbitraryTensor{s.inputTensor},
+		[]ort.ArbitraryTensor{s.output0, s.output1},
 		options,
 	)
 	if err != nil {
@@ -110,73 +85,49 @@ func newSession(modelData []byte, inputSize int) (*session, error) {
 }
 
 // newSessionFromFile creates a new ONNX session from a model file.
-func newSessionFromFile(modelPath string, inputSize int) (*session, error) {
-	// Initialize ONNX Runtime if not already done
+func newSessionFromFile(modelPath string, inputSize int, pc ProviderConfig) (*session, error) {
 	if err := initONNXRuntime(); err != nil {
 		return nil, fmt.Errorf("failed to initialize ONNX Runtime: %w", err)
 	}
 
-	s := &session{
-		inputSize: inputSize,
-	}
+	s := &session{inputSize: inputSize}
 
-	// Define expected shapes
 	s.inputShape = ort.Shape{1, 3, int64(inputSize), int64(inputSize)}
 	s.output0Shape = ort.Shape{1, modelOutputChannels, modelOutputPredictions}
 	s.output1Shape = ort.Shape{1, modelMaskCoefficients, modelPrototypeSize, modelPrototypeSize}
 
-	// Allocate input tensor
-	inputData := make([]float32, 1*3*inputSize*inputSize)
 	var err error
-	s.inputTensor, err = ort.NewTensor(s.inputShape, inputData)
+	s.inputTensor, err = ort.NewTensor(s.inputShape, make([]float32, 1*3*inputSize*inputSize))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create input tensor: %w", err)
 	}
 
-	// Allocate output tensors
-	output0Data := make([]float32, 1*modelOutputChannels*modelOutputPredictions)
-	s.output0, err = ort.NewTensor(s.output0Shape, output0Data)
+	s.output0, err = ort.NewTensor(s.output0Shape, make([]float32, 1*modelOutputChannels*modelOutputPredictions))
 	if err != nil {
 		s.inputTensor.Destroy()
 		return nil, fmt.Errorf("failed to create output0 tensor: %w", err)
 	}
 
-	output1Data := make([]float32, 1*modelMaskCoefficients*modelPrototypeSize*modelPrototypeSize)
-	s.output1, err = ort.NewTensor(s.output1Shape, output1Data)
+	s.output1, err = ort.NewTensor(s.output1Shape, make([]float32, 1*modelMaskCoefficients*modelPrototypeSize*modelPrototypeSize))
 	if err != nil {
 		s.inputTensor.Destroy()
 		s.output0.Destroy()
 		return nil, fmt.Errorf("failed to create output1 tensor: %w", err)
 	}
 
-	// Create session options
-	options, err := ort.NewSessionOptions()
+	options, err := buildSessionOptions(pc)
 	if err != nil {
 		s.cleanup()
-		return nil, fmt.Errorf("failed to create session options: %w", err)
+		return nil, err
 	}
 	defer options.Destroy()
-
-	// Set number of threads for CPU inference
-	numThreads := runtime.NumCPU()
-	if numThreads > 4 {
-		numThreads = 4
-	}
-	if err := options.SetIntraOpNumThreads(numThreads); err != nil {
-		s.cleanup()
-		return nil, fmt.Errorf("failed to set intra-op threads: %w", err)
-	}
-
-	// Create the ONNX session from file
-	inputs := []ort.ArbitraryTensor{s.inputTensor}
-	outputs := []ort.ArbitraryTensor{s.output0, s.output1}
 
 	s.ortSession, err = ort.NewAdvancedSession(
 		modelPath,
 		[]string{"images"},
 		[]string{"output0", "output1"},
-		inputs,
-		outputs,
+		[]ort.ArbitraryTensor{s.inputTensor},
+		[]ort.ArbitraryTensor{s.output0, s.output1},
 		options,
 	)
 	if err != nil {
@@ -187,17 +138,77 @@ func newSessionFromFile(modelPath string, inputSize int) (*session, error) {
 	return s, nil
 }
 
+// buildSessionOptions constructs ORT SessionOptions from a ProviderConfig.
+func buildSessionOptions(pc ProviderConfig) (*ort.SessionOptions, error) {
+	options, err := ort.NewSessionOptions()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create session options: %w", err)
+	}
+
+	// Graph optimization: zero value (ORT_DISABLE_ALL) is treated as EnableAll
+	// so that the zero-value ProviderConfig is safe to use without explicit setup.
+	level := pc.GraphOptimization
+	if level == ort.GraphOptimizationLevelDisableAll {
+		level = ort.GraphOptimizationLevelEnableAll
+	}
+	if err := options.SetGraphOptimizationLevel(level); err != nil {
+		options.Destroy()
+		return nil, fmt.Errorf("failed to set graph optimization level: %w", err)
+	}
+
+	// Intra-op threads: 0 means auto-select.
+	numThreads := pc.IntraOpThreads
+	if numThreads <= 0 {
+		numThreads = runtime.NumCPU()
+		if numThreads > 4 {
+			numThreads = 4
+		}
+	}
+	if err := options.SetIntraOpNumThreads(numThreads); err != nil {
+		options.Destroy()
+		return nil, fmt.Errorf("failed to set intra-op threads: %w", err)
+	}
+
+	// Inter-op threads: only configure when explicitly requested.
+	if pc.InterOpThreads > 0 {
+		if err := options.SetInterOpNumThreads(pc.InterOpThreads); err != nil {
+			options.Destroy()
+			return nil, fmt.Errorf("failed to set inter-op threads: %w", err)
+		}
+	}
+
+	// Memory pattern optimization.
+	if err := options.SetMemPattern(pc.EnableMemPattern); err != nil {
+		options.Destroy()
+		return nil, fmt.Errorf("failed to set memory pattern: %w", err)
+	}
+
+	// Execution provider: CoreML is appended before the default CPU fallback.
+	switch pc.Provider {
+	case ProviderCoreML:
+		if err := options.AppendExecutionProviderCoreMLV2(pc.CoreMLOptions); err != nil {
+			options.Destroy()
+			return nil, fmt.Errorf("failed to append CoreML provider: %w", err)
+		}
+	case ProviderCPU:
+		// CPU is always the ORT fallback; nothing to configure explicitly.
+	default:
+		options.Destroy()
+		return nil, fmt.Errorf("unsupported execution provider: %d", pc.Provider)
+	}
+
+	return options, nil
+}
+
 // setInput copies preprocessed image data into the input tensor.
-// The data must be in CHW format (channels, height, width) with shape (3, inputSize, inputSize).
-// Values should be normalized to [0, 1] range.
+// The data must be in CHW format with shape (3, inputSize, inputSize),
+// values normalized to [0, 1].
 func (s *session) setInput(data []float32) error {
 	expectedLen := 3 * s.inputSize * s.inputSize
 	if len(data) != expectedLen {
 		return fmt.Errorf("input data has wrong length: got %d, expected %d", len(data), expectedLen)
 	}
-
-	inputSlice := s.inputTensor.GetData()
-	copy(inputSlice, data)
+	copy(s.inputTensor.GetData(), data)
 	return nil
 }
 
@@ -207,7 +218,7 @@ func (s *session) run() error {
 }
 
 // getOutput0 returns the prediction output data.
-// Shape: (1, 116, 8400) - flattened to []float32.
+// Shape: (1, 37, 8400) - flattened to []float32.
 func (s *session) getOutput0() []float32 {
 	return s.output0.GetData()
 }
@@ -254,15 +265,12 @@ func initONNXRuntime() error {
 		return nil
 	}
 
-	// Set the shared library path based on the platform
-	// On macOS, ONNX Runtime is typically installed via Homebrew
 	if runtime.GOOS == "darwin" {
-		// Try Homebrew paths (ARM and Intel)
 		paths := []string{
-			"/opt/homebrew/lib/libonnxruntime.dylib",   // ARM (Apple Silicon)
-			"/usr/local/lib/libonnxruntime.dylib",      // Intel
-			"/opt/homebrew/lib/libonnxruntime.1.dylib", // Versioned ARM
-			"/usr/local/lib/libonnxruntime.1.dylib",    // Versioned Intel
+			"/opt/homebrew/lib/libonnxruntime.dylib",
+			"/usr/local/lib/libonnxruntime.dylib",
+			"/opt/homebrew/lib/libonnxruntime.1.dylib",
+			"/usr/local/lib/libonnxruntime.1.dylib",
 		}
 		for _, path := range paths {
 			if _, err := os.Stat(path); err == nil {
@@ -271,12 +279,11 @@ func initONNXRuntime() error {
 			}
 		}
 	} else if runtime.GOOS == "linux" {
-		// On Linux, try standard library paths
 		paths := []string{
 			"/usr/lib/libonnxruntime.so",
 			"/usr/local/lib/libonnxruntime.so",
 			"/usr/lib/x86_64-linux-gnu/libonnxruntime.so",
-			"libonnxruntime.so", // Try system path
+			"libonnxruntime.so",
 		}
 		for _, path := range paths {
 			if _, err := os.Stat(path); err == nil {
@@ -285,7 +292,6 @@ func initONNXRuntime() error {
 			}
 		}
 	}
-	// On Windows, the default "onnxruntime.dll" should work
 
 	if err := ort.InitializeEnvironment(); err != nil {
 		return fmt.Errorf("failed to initialize ONNX Runtime environment: %w", err)

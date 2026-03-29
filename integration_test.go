@@ -314,6 +314,97 @@ func BenchmarkDatasetMinimal(b *testing.B) {
 	b.ReportMetric(float64(len(imagePaths)), "images/op")
 }
 
+// BenchmarkDatasetCoreML measures end-to-end throughput using the CoreML execution
+// provider with all compute units (CPU + GPU + Neural Engine).
+// Compare against BenchmarkDataset to quantify the hardware acceleration gain.
+//
+// Run with:
+//
+//	go test -tags integration -bench=BenchmarkDataset -benchmem -benchtime=3x .
+func BenchmarkDatasetCoreML(b *testing.B) {
+	imagePaths := collectImagePaths(b)
+
+	cfg := gqreader.DefaultConfig()
+	cfg.DetectionConfig = cfg.DetectionConfig.WithProvider(qrdet.CoreMLProviderConfig())
+	r, err := gqreader.NewFromFile(modelPath, cfg)
+	if err != nil {
+		b.Skipf("CoreML provider unavailable: %v", err)
+	}
+	defer r.Close()
+
+	// Warm up: first inference triggers CoreML JIT compilation.
+	if len(imagePaths) > 0 {
+		_, _ = r.DetectAndDecodeFile(imagePaths[0])
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		for _, path := range imagePaths {
+			if _, err := r.DetectAndDecodeFile(path); err != nil {
+				b.Errorf("DetectAndDecodeFile(%s): %v", path, err)
+			}
+		}
+	}
+	b.ReportMetric(float64(len(imagePaths)), "images/op")
+}
+
+// BenchmarkDatasetCoreMLCPU measures throughput using CoreML with CPU-only compute units.
+// This isolates CoreML graph compilation overhead from hardware acceleration: if this is
+// close to BenchmarkDataset (plain CPU), the speedup in CoreML ALL comes from GPU/ANE.
+func BenchmarkDatasetCoreMLCPU(b *testing.B) {
+	imagePaths := collectImagePaths(b)
+
+	cfg := gqreader.DefaultConfig()
+	cfg.DetectionConfig = cfg.DetectionConfig.WithProvider(qrdet.CoreMLCPUOnlyConfig())
+	r, err := gqreader.NewFromFile(modelPath, cfg)
+	if err != nil {
+		b.Skipf("CoreML+CPU provider unavailable: %v", err)
+	}
+	defer r.Close()
+
+	if len(imagePaths) > 0 {
+		_, _ = r.DetectAndDecodeFile(imagePaths[0])
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		for _, path := range imagePaths {
+			if _, err := r.DetectAndDecodeFile(path); err != nil {
+				b.Errorf("DetectAndDecodeFile(%s): %v", path, err)
+			}
+		}
+	}
+	b.ReportMetric(float64(len(imagePaths)), "images/op")
+}
+
+// BenchmarkDatasetCoreMLGPU measures throughput using CoreML with CPU and GPU.
+// Useful for comparing ANE vs GPU dispatch on Apple Silicon.
+func BenchmarkDatasetCoreMLGPU(b *testing.B) {
+	imagePaths := collectImagePaths(b)
+
+	cfg := gqreader.DefaultConfig()
+	cfg.DetectionConfig = cfg.DetectionConfig.WithProvider(qrdet.CoreMLGPUConfig())
+	r, err := gqreader.NewFromFile(modelPath, cfg)
+	if err != nil {
+		b.Skipf("CoreML+GPU provider unavailable: %v", err)
+	}
+	defer r.Close()
+
+	if len(imagePaths) > 0 {
+		_, _ = r.DetectAndDecodeFile(imagePaths[0])
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		for _, path := range imagePaths {
+			if _, err := r.DetectAndDecodeFile(path); err != nil {
+				b.Errorf("DetectAndDecodeFile(%s): %v", path, err)
+			}
+		}
+	}
+	b.ReportMetric(float64(len(imagePaths)), "images/op")
+}
+
 // collectImagePaths returns the sorted list of .jpg paths in datasetDir.
 func collectImagePaths(tb testing.TB) []string {
 	tb.Helper()
