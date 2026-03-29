@@ -341,4 +341,4 @@ Not all ONNX Runtime distributions include all execution providers:
 | OpenVINO | ❌ | ✅ (separate pkg) | Intel OpenVINO runtime required |
 
 **Note**: `"CPUAndNE"` (Neural Engine only) is absent from ORT 1.24.x builds. Valid
-CoreML `MLComputeUnits` values: `"All"`, `"CPUAndGPU"`, `"CPUOnly"`.
+CoreML `MLComputeUnits` values: `"ALL"`, `"CPUAndGPU"`, `"CPUOnly"` (case-sensitive).

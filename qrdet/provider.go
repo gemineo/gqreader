@@ -49,7 +49,7 @@ type ProviderConfig struct {
 
 	// CoreMLOptions configures the CoreML EP (macOS only).
 	// Common keys:
-	//   "MLComputeUnits" – "All" | "CPUAndGPU" | "CPUOnly" (default: "All")
+	//   "MLComputeUnits" – "ALL" | "CPUAndGPU" | "CPUOnly" (default: "ALL")
 	//   "ModelFormat"    – "MLProgram" | "NeuralNetwork" (default: "MLProgram")
 	// Note: "CPUAndNE" (Neural Engine only) requires ORT 1.25+ with ANE support.
 	// See: https://onnxruntime.ai/docs/execution-providers/CoreML-ExecutionProvider.html
@@ -113,7 +113,7 @@ func CoreMLProviderConfig() ProviderConfig {
 	return ProviderConfig{
 		Provider: ProviderCoreML,
 		CoreMLOptions: map[string]string{
-			"MLComputeUnits": "All",
+			"MLComputeUnits": "ALL",
 			"ModelFormat":    "MLProgram",
 		},
 		GraphOptimization: ort.GraphOptimizationLevelEnableAll,
