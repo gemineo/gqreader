@@ -1,8 +1,8 @@
 # Integration Testing Guide
 
-This document describes how to run the integration tests and benchmarks against
-the reference QR code dataset, how to interpret the results, and how to use
-those results to measure the impact of pipeline improvements over time.
+This document describes how to obtain the reference dataset, how to run the
+integration tests and benchmarks, how to interpret the results, and how to
+use those results to measure the impact of pipeline improvements over time.
 
 ---
 
@@ -21,14 +21,15 @@ those results to measure the impact of pipeline improvements over time.
 
 ## Overview
 
-The integration tests exercise the full `DetectAndDecodeFile` pipeline — ONNX
-inference, image preprocessing, perspective correction, and QR decoding — against
-99 real-world QR code images with known ground-truth content.
+The integration tests exercise the full `DetectAndDecodeFile` pipeline —
+ONNX inference, image preprocessing, perspective correction, and QR decoding
+— against 99 real-world QR code images with known ground-truth content.
 
 Unlike the unit tests (which use mocks and synthetic images), these tests
-require the ONNX model and produce **pass/fail results that directly reflect
-the real-world accuracy of the pipeline**. Failed sub-tests are intentionally
-left as failures: they serve as improvement targets and as a regression guard.
+require the ONNX model and a separately obtained dataset. They produce
+**pass/fail results that directly reflect the real-world accuracy of the
+pipeline**. Failed sub-tests are intentionally left as failures: they serve
+as improvement targets and as a regression guard.
 
 Three test functions are provided:
 
@@ -39,40 +40,77 @@ Three test functions are provided:
 | `BenchmarkDataset` | Measures throughput with `DefaultConfig` |
 | `BenchmarkDatasetMinimal` | Measures throughput with `MinimalConfig` (fast path) |
 
+> For cross-tool comparisons (gqreader vs. Python QReader vs. zbar), see the
+> companion project `gqreader-benchmark`.
+
 ---
 
 ## Reference Dataset
 
-The dataset lives at `testdata/Dataset-QR-2020/` and contains 99 JPEG images
-across four categories, originally published by Björn Krüger (2020).
+The dataset is **not included in this repository**. It must be obtained
+separately and placed at the expected path before running the integration
+tests.
 
-| Category | Files | Count | Characteristics |
-|---|---|---|---|
-| Synthetic | `QR1*.jpg` | 5 | Low-resolution, synthetic QR codes |
-| Internet | `QR2*.jpg`, `QR3*.jpg` | 50 | Low-resolution images from the web, usually one QR per image |
-| Manufacturing | `QR4*.jpg`, `QR6*.jpg` | 19 | High-resolution (2592×1920), many small QR codes per image, `QR6*` have damaged finder patterns |
-| Sörös (2013) | `QR5*.jpg` | 25 | 640×480 px, one or two QR codes per image, non-blurred |
+### Dataset: QR Code Images (Dataset-QR-2020)
 
-Total QR codes encoded across the dataset: **595**.
+The dataset was assembled by Björn Krüger (2020) and contains 99 JPEG images
+across four categories, totalling 595 QR codes:
 
-### annotations.txt
+| Category | Files | Images | QR codes | Characteristics |
+|---|---|---|---|---|
+| Synthetic | `QR1*.jpg` | 5 | 25 | Low-resolution synthetic QR codes |
+| Internet | `QR2*.jpg`, `QR3*.jpg` | 42 | 76 | Low-resolution web images, usually one QR per image |
+| Manufacturing | `QR4*.jpg` | 7 | 180 | High-resolution (2592×1920), many small QR codes per image |
+| Manufacturing (damaged) | `QR6*.jpg` | 6 | 250 | Same as QR4, but QR codes have damaged finder patterns |
+| Sörös (2013) | `QR5*.jpg` | 39 | 64 | 640×480 px, one or two QR codes per image, non-blurred |
 
-The file `testdata/Dataset-QR-2020/annotations.txt` maps each image stem to
-the expected decoded content of all QR codes it contains:
+The dataset is accompanied by an `annotations.txt` file that maps each image
+to the expected decoded content of all QR codes it contains.
+
+### Obtaining the Dataset
+
+Contact the dataset maintainer or refer to the `gqreader-benchmark`
+companion project for acquisition instructions. The dataset may not be
+redistributed without permission.
+
+Once obtained, place the files so that the directory structure matches:
 
 ```
-QR1a=123456789|ABCDE|ABCDEFGH123456789|ABCDEFGHIJKLMNO
-QR2a=https://goo.gl/HzULC2
-QR4b=81HA001X4925|37HA001X4905|...  (50 entries for 50 QR codes)
+<repo-root>/
+└── testdata/
+    └── Dataset-QR-2020/
+        ├── annotations.txt
+        ├── QR1a.jpg
+        ├── QR1b.jpg
+        ...
+        └── QR6f.jpg
 ```
 
-**Format**: `<stem>=<content1>|<content2>|...`
+The directory `testdata/Dataset-QR-2020/` is listed in `.gitignore` and will
+never be committed to the repository.
 
-- Each `|`-separated entry corresponds to one QR code in the image.
-- Entries with identical content are **preserved** (not deduplicated). For
-  example, `QR1e` contains 5 QR codes all encoding the same long text string,
-  and `QR2b` contains 2 QR codes both encoding the same URL. The pipe count
-  is the true QR code count in the image.
+### Using a Non-Default Dataset Path
+
+If you store the dataset outside the repository (recommended for shared
+machines or CI environments), set the `QREADER_DATASET_DIR` environment
+variable:
+
+```bash
+QREADER_DATASET_DIR=/data/qr-datasets/Dataset-QR-2020 task test-integration
+```
+
+The model path can similarly be overridden:
+
+```bash
+QREADER_MODEL_PATH=/opt/models/qrdet-s.onnx task test-integration
+```
+
+Both variables default to paths relative to the repository root:
+
+| Variable | Default |
+|---|---|
+| `QREADER_DATASET_DIR` | `testdata/Dataset-QR-2020` |
+| `QREADER_MODEL_PATH` | `qrdet/models/qrdet-s.onnx` |
 
 ---
 
@@ -80,9 +118,9 @@ QR4b=81HA001X4925|37HA001X4905|...  (50 entries for 50 QR codes)
 
 ### 1. ONNX model
 
-The integration tests load the ONNX model from `qrdet/models/qrdet-s.onnx`.
-If the file is absent, `TestMain` prints a skip message and exits with code 0
-(no test failure, CI-safe):
+The integration tests load the ONNX model (default path:
+`qrdet/models/qrdet-s.onnx`). If the file is absent, `TestMain` prints a
+skip message and exits with code 0 (no test failure, CI-safe):
 
 ```
 SKIP: QReader init failed: ...File doesn't exist
@@ -96,13 +134,18 @@ task setup-python   # one-time: creates .venv with ultralytics + onnx
 task model          # downloads qrdet-s.pt and exports to qrdet/models/qrdet-s.onnx
 ```
 
-If the ONNX file already exists, `task model` is a no-op (cached via Taskfile
-`status`/`generates` guards).
+If the ONNX file already exists, `task model` is a no-op (Taskfile
+`status`/`generates` guards skip the export step).
 
-### 2. System libraries
+### 2. Dataset
 
-Same requirements as the main build: OpenCV and ONNX Runtime must be installed
-(see the main `README.md` Installation section).
+Place the dataset at `testdata/Dataset-QR-2020/` (or set
+`QREADER_DATASET_DIR`). See [Reference Dataset](#reference-dataset) above.
+
+### 3. System libraries
+
+Same requirements as the main build: OpenCV and ONNX Runtime must be
+installed. See the main `README.md` for installation instructions.
 
 ---
 
@@ -136,7 +179,7 @@ go test -v -tags integration -run TestDatasetDetectionOnly/QR5d1 .
 
 ```bash
 go test -v -tags integration -run TestDatasetDetectionOnly -timeout 300s .
-go test -v -tags integration -run TestDatasetDecodeAll    -timeout 300s .
+go test -v -tags integration -run TestDatasetDecodeAll     -timeout 300s .
 ```
 
 ### Unit tests are unaffected
@@ -156,8 +199,8 @@ task test   # runs only unit tests — integration_test.go is invisible
 ### TestDatasetDetectionOnly
 
 Each image is a sub-test. A sub-test passes if `DetectAndDecodeFile` returns
-at least one result (regardless of whether it was decoded). This exercises the
-ONNX inference layer in isolation.
+at least one result (regardless of whether it was decoded). This exercises
+the ONNX inference layer in isolation.
 
 ```
 === RUN   TestDatasetDetectionOnly
@@ -169,8 +212,8 @@ ONNX inference layer in isolation.
 --- PASS: TestDatasetDetectionOnly (26.10s)
 ```
 
-A failure here means the YOLO model produced zero detections for that image —
-a regression in the detection layer.
+A failure here means the YOLO model produced zero detections — a regression
+in the detection layer.
 
 ### TestDatasetDecodeAll
 
@@ -184,9 +227,9 @@ threshold**:
 | 2–5 | 1 |
 | 6 or more | ceil(n × 30%) |
 
-The threshold for batch images (QR4, QR6 categories) acknowledges that
-decoding all 50 tiny QR codes in a single 2592×1920 image is not a realistic
-goal at this stage.
+The threshold for batch images (QR4, QR6) acknowledges that decoding all 50
+tiny QR codes in a single 2592×1920 image is not a realistic goal at the
+current pipeline stage.
 
 **Passing sub-test:**
 
@@ -203,13 +246,12 @@ goal at this stage.
     --- FAIL: TestDatasetDecodeAll/QR2b (0.32s)
 ```
 
-The failure message tells you:
-- `decoded 0/2` — how many expected QR codes were matched vs. total expected
-- `threshold 1` — the minimum required to pass
-- `2 detections total` — the YOLO detector found the QR codes, but the decode
-  step failed
+The message tells you:
+- `decoded 0/2` — matched vs. total expected
+- `threshold 1` — minimum required to pass
+- `2 detections total` — YOLO found the QR codes; the decode step failed
 
-**Summary block** (logged at the end of `TestDatasetDecodeAll`):
+**Summary block** (always logged at the end of `TestDatasetDecodeAll`):
 
 ```
     integration_test.go:206: === Dataset Summary ===
@@ -218,19 +260,7 @@ The failure message tells you:
     integration_test.go:209: QR codes decoded:          XX/595 (XX.X%)
 ```
 
-This summary is always printed, even when some sub-tests fail. Use it as the
-primary metric when comparing pipeline versions.
-
-### Reading the final result line
-
-```
---- FAIL: TestDatasetDecodeAll (25.80s)
-FAIL    github.com/gemineo/gqreader    51.646s
-```
-
-The overall test binary exits with code 1 as long as any sub-test fails. This
-is expected and intentional — the failures are improvement targets, not bugs
-in the test infrastructure.
+This summary is the primary metric to watch across pipeline versions.
 
 ---
 
@@ -260,149 +290,98 @@ BenchmarkDataset-10          3    38_450_201_000 ns/op    99 images/op    ...
 BenchmarkDatasetMinimal-10   3    12_130_088_000 ns/op    99 images/op    ...
 ```
 
-| Field | Meaning |
-|---|---|
-| `-10` suffix | Number of CPU threads used |
-| `3` | Number of iterations (set by `-benchtime=3x`) |
-| `ns/op` | Nanoseconds for one complete pass over all 99 images |
-| `images/op` | Custom metric: number of images per pass (always 99) |
-
 **Deriving per-image latency:**
 
 ```
 per-image latency = ns/op ÷ images/op
 
 Example:
-  38_450_201_000 ns/op ÷ 99 images/op = ~388 ms/image  (DefaultConfig)
-  12_130_088_000 ns/op ÷ 99 images/op = ~122 ms/image  (MinimalConfig)
+  38_450_201_000 ns ÷ 99 = ~388 ms/image  (DefaultConfig)
+  12_130_088_000 ns ÷ 99 = ~122 ms/image  (MinimalConfig)
 ```
 
 `BenchmarkDatasetMinimal` uses `MinimalConfig` (no scaling, no perspective
 correction). The gap between the two benchmarks quantifies the cost of the
 full preprocessing pipeline.
 
-### Saving benchmark results for comparison
-
-Use `tee` to capture the output:
+### Saving and comparing benchmark results
 
 ```bash
-go test -tags integration -bench=. -benchmem -benchtime=3x -run=^$ . \
-  | tee benchmarks/$(date +%Y-%m-%d)_baseline.txt
-```
+# Save a baseline
+go test -tags integration -bench=. -benchmem -benchtime=5x -run=^$ . \
+  | tee benchmarks/$(git rev-parse --short HEAD)_bench.txt
 
-Then use the standard `benchstat` tool to compare two runs:
-
-```bash
+# Compare two runs with benchstat
 go install golang.org/x/perf/cmd/benchstat@latest
-benchstat benchmarks/2026-03-29_before.txt benchmarks/2026-03-29_after.txt
+benchstat benchmarks/BEFORE_bench.txt benchmarks/AFTER_bench.txt
 ```
 
-`benchstat` output example:
+`benchstat` output:
 
 ```
-name                  old time/op    new time/op    delta
-BenchmarkDataset-10    38.5s ± 2%     31.2s ± 1%   -19.0%  (p=0.008)
-BenchmarkDatasetMinimal-10  12.1s ± 1%  11.8s ± 2%  -2.5%  (p=0.210)
+name                     old time/op    new time/op    delta
+BenchmarkDataset-10       38.5s ± 2%     31.2s ± 1%   -19.0%  (p=0.008)
+BenchmarkDatasetMinimal-10  12.1s ± 1%  11.8s ± 2%    -2.5%  (p=0.210)
 ```
+
+The `benchmarks/` directory is gitignored — store runs locally without
+polluting the repository.
 
 ---
 
 ## Tracking Pipeline Improvements
 
-The integration tests are designed to be a living benchmark. The workflow for
-measuring an improvement is:
+### Workflow
 
-### Step 1 — Establish a baseline
-
-Before making any changes, record the current state:
+**Step 1 — Record the baseline before making changes:**
 
 ```bash
-# Capture test results
 go test -v -tags integration -timeout 300s -run TestDatasetDecodeAll . \
   | tee benchmarks/$(git rev-parse --short HEAD)_decode.txt
 
-# Capture benchmark results
 go test -tags integration -bench=. -benchmem -benchtime=5x -run=^$ . \
   | tee benchmarks/$(git rev-parse --short HEAD)_bench.txt
 ```
 
-The key numbers to note from the summary block:
-- **Images meeting threshold**: `88/99 (88.9%)` — primary accuracy metric
-- **QR codes decoded**: overall decode rate across all 595 QR codes
-- **Per-image latency** (from benchmark): `~388 ms/image` for `DefaultConfig`
+**Step 2 — Make your change.**
 
-### Step 2 — Make your change
-
-Typical improvement areas and their expected test impact:
-
-| Change | Expected impact on TestDatasetDecodeAll |
-|---|---|
-| Improve OpenCV decoder (e.g. add zbar) | More sub-tests pass; summary rate increases |
-| Add new preprocessing strategy | Some currently failing images may start passing |
-| Tune confidence threshold | May affect detection rate (TestDatasetDetectionOnly) |
-| Optimize ONNX session (threads, batch) | No accuracy change; benchmark time decreases |
-| Add perspective preprocessing variants | Some failing images may start passing |
-
-### Step 3 — Re-run and compare
+**Step 3 — Re-run and diff:**
 
 ```bash
-# Compare accuracy
-go test -v -tags integration -timeout 300s -run TestDatasetDecodeAll . \
-  | tee benchmarks/$(git rev-parse --short HEAD)_decode.txt
+# Accuracy diff
+diff <(grep "FAIL\|Summary" benchmarks/BEFORE_decode.txt) \
+     <(grep "FAIL\|Summary" benchmarks/AFTER_decode.txt)
 
-diff <(grep "FAIL\|PASS\|Summary" benchmarks/BEFORE_decode.txt) \
-     <(grep "FAIL\|PASS\|Summary" benchmarks/AFTER_decode.txt)
-
-# Compare throughput
-go test -tags integration -bench=. -benchmem -benchtime=5x -run=^$ . \
-  | tee benchmarks/$(git rev-parse --short HEAD)_bench.txt
-
+# Throughput diff
 benchstat benchmarks/BEFORE_bench.txt benchmarks/AFTER_bench.txt
 ```
 
-### Step 4 — Interpret the diff
-
-**A sub-test that was FAIL and is now PASS** means the pipeline improvement
-successfully handled a previously undecodable image. Check that the image
-category (QR2/QR3 vs QR5 vs QR4/QR6) matches your expectation — for example,
-a better decoder should primarily improve QR2/QR3/QR5 images, not QR4/QR6
-manufacturing images (which are limited by the density of QR codes rather
-than decoder quality).
-
-**A sub-test that was PASS and is now FAIL** is a regression. Investigate
-before merging.
-
-**The summary rate** (`Images meeting threshold`) is the single headline
-number to report in commit messages and PR descriptions:
+**Step 4 — Report in the commit message:**
 
 ```
 fix(qrdecode): replace OpenCV decoder with zbar
 
 Decode accuracy: 88/99 → 94/99 images (+6)
-Throughput: unchanged (decoder cost is negligible vs. ONNX inference)
+Throughput: unchanged (~388 ms/image)
 ```
 
-### Interpreting the 11 known failing images
+### What each failure category tells you
 
-As of the baseline (2026-03-29), these images are detected but not decoded:
+| Failure pattern | Likely cause | Relevant improvement |
+|---|---|---|
+| Detected but not decoded (0 decoded, N detections > 0) | Decoder limitation | Better decoder (zbar), more preprocessing variants |
+| Not detected (0 detections) | YOLO threshold too high, very small QR | Lower confidence threshold, rescaling |
+| Partial decode (k decoded, k < expected) | Dense batch images, overlapping QR codes | Improved NMS, multi-crop strategy |
 
-| Image | Category | QR codes | Likely cause |
-|---|---|---|---|
-| QR2b | Internet | 2 | Low-resolution, content partially obscured |
-| QR2i | Internet | 1 | Low-resolution URL QR, tight crop |
-| QR2j | Internet | 1 | Low-resolution, small module size |
-| QR2p | Internet | 1 | Complex URL, high-density QR version |
-| QR3c | Internet | 1 | Printed on curved surface |
-| QR3e | Internet | 1 | Low contrast, perspective distortion |
-| QR3h | Internet | 1 | Alphanumeric content, complex encoding |
-| QR3k | Internet | 1 | Japanese site URL, encoding issues |
-| QR3q | Internet | 1 | Compressed URL, marginal module size |
-| QR5d1 | Sörös | 1 | Small QR at low resolution |
-| QR5l3 | Sörös | 1 | QR partially out of frame |
+### Typical improvement areas and their expected impact
 
-All 11 are detected (YOLO confidence > threshold), so the failure is
-entirely in the decode step. A better decoder (e.g. zbar) or additional
-preprocessing variants would be the most likely path to resolving them.
+| Change | Expected impact on `TestDatasetDecodeAll` |
+|---|---|
+| Add zbar decoder | More sub-tests pass; summary rate increases |
+| New preprocessing strategy | Some currently failing images start passing |
+| Tune confidence threshold | May affect `TestDatasetDetectionOnly` |
+| Optimize ONNX session (threads, batch) | No accuracy change; benchmark time decreases |
+| Improve perspective correction | Some failing images may start passing |
 
 ---
 
@@ -414,10 +393,28 @@ Recorded on 2026-03-29, commit `1c10747`, Apple M3 Pro (CPU-only):
 |---|---|
 | `TestDatasetDetectionOnly` | **99/99** (100%) |
 | `TestDatasetDecodeAll` — images meeting threshold | **88/99** (88.9%) |
-| `TestDatasetDecodeAll` — known failures | 11 images (all decode failures, not detection failures) |
+| Known failing images | 11 (all decode failures, not detection failures) |
 | `BenchmarkDataset` per-image latency | ~388 ms/image (DefaultConfig) |
 | `BenchmarkDatasetMinimal` per-image latency | ~122 ms/image (MinimalConfig) |
-| Total test suite duration | ~52 seconds |
+| Total integration test suite duration | ~52 seconds |
 
-Store your own baselines in `benchmarks/` (directory is gitignored) to track
-your changes locally without polluting the repository history.
+### Known failing images
+
+All 11 failures are detected by YOLO but not decoded by OpenCV:
+
+| Image | Expected QR codes | Likely cause |
+|---|---|---|
+| QR2b | 2 | Low-resolution, small module size |
+| QR2i | 1 | Low-resolution URL QR, tight crop |
+| QR2j | 1 | Low-resolution, small module size |
+| QR2p | 1 | Complex URL, high-density QR version |
+| QR3c | 1 | Printed on curved surface |
+| QR3e | 1 | Low contrast, perspective distortion |
+| QR3h | 1 | Short alphanumeric code, marginal quality |
+| QR3k | 1 | Japanese site URL, encoding edge case |
+| QR3q | 1 | Compressed URL, small module size |
+| QR5d1 | 1 | Small QR at 640×480 resolution |
+| QR5l3 | 1 | QR partially out of frame |
+
+These are the primary targets for decoder improvements or additional
+preprocessing strategies.

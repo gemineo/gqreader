@@ -22,11 +22,28 @@ var (
 	readerErr    error
 )
 
-const (
-	datasetDir      = "testdata/Dataset-QR-2020"
-	annotationsFile = datasetDir + "/annotations.txt"
-	modelPath       = "qrdet/models/qrdet-s.onnx"
+// Dataset and model paths can be overridden via environment variables.
+// This allows the test suite to run against an externally placed dataset
+// (e.g. from the gqreader-benchmark companion project) without modifying
+// the source.
+//
+//   QREADER_DATASET_DIR  path to the Dataset-QR-2020 directory
+//                        (default: testdata/Dataset-QR-2020)
+//   QREADER_MODEL_PATH   path to qrdet-s.onnx
+//                        (default: qrdet/models/qrdet-s.onnx)
+var (
+	datasetDir = envOrDefault("QREADER_DATASET_DIR", "testdata/Dataset-QR-2020")
+	modelPath  = envOrDefault("QREADER_MODEL_PATH", "qrdet/models/qrdet-s.onnx")
 )
+
+var annotationsFile = filepath.Join(datasetDir, "annotations.txt")
+
+func envOrDefault(key, defaultVal string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return defaultVal
+}
 
 func TestMain(m *testing.M) {
 	readerOnce.Do(func() {
