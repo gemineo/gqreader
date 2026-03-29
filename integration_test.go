@@ -1,0 +1,314 @@
+//go:build integration
+
+package gqreader_test
+
+import (
+	"bufio"
+	"fmt"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+	"sync"
+	"testing"
+
+	gqreader "github.com/gemineo/gqreader"
+	"github.com/gemineo/gqreader/qrdet"
+)
+
+var (
+	sharedReader *gqreader.QReader
+	readerOnce   sync.Once
+	readerErr    error
+)
+
+const (
+	datasetDir      = "testdata/Dataset-QR-2020"
+	annotationsFile = datasetDir + "/annotations.txt"
+	modelPath       = "qrdet/models/qrdet-s.onnx"
+)
+
+func TestMain(m *testing.M) {
+	readerOnce.Do(func() {
+		sharedReader, readerErr = gqreader.NewFromFile(modelPath, gqreader.DefaultConfig())
+	})
+	if readerErr != nil {
+		fmt.Fprintf(os.Stderr, "SKIP: QReader init failed: %v\n", readerErr)
+		os.Exit(0) // soft skip — do not fail CI when model is absent
+	}
+	code := m.Run()
+	if sharedReader != nil {
+		_ = sharedReader.Close()
+	}
+	_ = qrdet.CleanupONNXRuntime()
+	os.Exit(code)
+}
+
+// parseAnnotations reads annotations.txt and returns a map from image stem
+// (e.g., "QR2a") to the ordered list of expected QR code contents.
+//
+// File format: <stem>=<content1>|<content2>|...
+//
+// Multiple entries for the same stem represent multiple QR codes in one image.
+// Entries with identical content are preserved (e.g., QR1e has 5 QR codes all
+// encoding the same text; QR2b has 2 QR codes with the same URL). The count of
+// entries is the total number of QR codes expected in the image.
+//
+// The first line may carry a UTF-8 BOM (0xEF 0xBB 0xBF) which is stripped.
+func parseAnnotations(path string) (map[string][]string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("opening annotations: %w", err)
+	}
+	defer f.Close()
+
+	result := make(map[string][]string)
+	scanner := bufio.NewScanner(f)
+	firstLine := true
+
+	for scanner.Scan() {
+		line := scanner.Text()
+
+		// Strip UTF-8 BOM from the very first line.
+		if firstLine {
+			line = strings.TrimPrefix(line, "\xef\xbb\xbf")
+			firstLine = false
+		}
+
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+
+		// Split on the first '=' only — content may contain '=' characters.
+		idx := strings.IndexByte(line, '=')
+		if idx < 0 {
+			continue
+		}
+		stem := line[:idx]
+		rawContents := line[idx+1:]
+
+		// Split on '|' without deduplication: multiple QR codes in one image
+		// can legitimately encode the same content.
+		parts := strings.Split(rawContents, "|")
+		result[stem] = parts
+	}
+
+	return result, scanner.Err()
+}
+
+// successThreshold returns the minimum number of expected QR codes that must
+// be decoded for a test case to pass.
+//
+//   - 1 expected  → require 1
+//   - 2–5 expected → require at least 1
+//   - 6+ expected  → require at least 30% (ceiling)
+func successThreshold(n int) int {
+	switch {
+	case n <= 5:
+		return 1
+	default:
+		// Integer ceiling of n * 0.30
+		t := (n*30 + 99) / 100
+		if t < 1 {
+			return 1
+		}
+		return t
+	}
+}
+
+// countMatched counts how many decoded results match entries in expected using
+// multiset semantics. Each expected entry can be consumed at most once, so
+// decoding 3 QRs all reading "foo" counts as 3 matches when expected contains
+// "foo" three times.
+func countMatched(results []gqreader.QRResult, expected []string) int {
+	remaining := make(map[string]int, len(expected))
+	for _, e := range expected {
+		remaining[e]++
+	}
+
+	nMatched := 0
+	for _, r := range results {
+		if !r.Decoded {
+			continue
+		}
+		if remaining[r.Content] > 0 {
+			nMatched++
+			remaining[r.Content]--
+		}
+	}
+	return nMatched
+}
+
+// TestDatasetDecodeAll iterates over every annotated image and verifies that
+// the decoded content meets the per-image success threshold.
+//
+// A summary of overall decode rates is logged after all sub-tests complete.
+func TestDatasetDecodeAll(t *testing.T) {
+	annotations, err := parseAnnotations(annotationsFile)
+	if err != nil {
+		t.Fatalf("parsing annotations: %v", err)
+	}
+
+	type testCase struct {
+		stem    string
+		imgPath string
+		expected []string
+	}
+
+	cases := make([]testCase, 0, len(annotations))
+	for stem, contents := range annotations {
+		imgPath := filepath.Join(datasetDir, stem+".jpg")
+		if _, err := os.Stat(imgPath); err != nil {
+			t.Logf("skipping %s: image not found at %s", stem, imgPath)
+			continue
+		}
+		cases = append(cases, testCase{stem: stem, imgPath: imgPath, expected: contents})
+	}
+
+	// Sort for deterministic sub-test ordering (map iteration is random).
+	sort.Slice(cases, func(i, j int) bool { return cases[i].stem < cases[j].stem })
+
+	var (
+		totalImages   int
+		imagesPassed  int
+		totalExpected int
+		totalDecoded  int
+	)
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.stem, func(t *testing.T) {
+			results, err := sharedReader.DetectAndDecodeFile(tc.imgPath)
+			if err != nil {
+				t.Errorf("%s: DetectAndDecodeFile error: %v", tc.stem, err)
+				return
+			}
+
+			nExpected := len(tc.expected)
+			threshold := successThreshold(nExpected)
+			nMatched := countMatched(results, tc.expected)
+
+			totalImages++
+			totalExpected += nExpected
+			totalDecoded += nMatched
+			if nMatched >= threshold {
+				imagesPassed++
+			}
+
+			if nMatched < threshold {
+				t.Errorf("%s: decoded %d/%d expected QR codes (threshold %d); %d detections total",
+					tc.stem, nMatched, nExpected, threshold, len(results))
+			}
+		})
+	}
+
+	decodeRate := 0.0
+	if totalExpected > 0 {
+		decodeRate = float64(totalDecoded) / float64(totalExpected) * 100
+	}
+	imgRate := 0.0
+	if totalImages > 0 {
+		imgRate = float64(imagesPassed) / float64(totalImages) * 100
+	}
+	t.Logf("=== Dataset Summary ===")
+	t.Logf("Images tested:             %d", totalImages)
+	t.Logf("Images meeting threshold:  %d/%d (%.1f%%)", imagesPassed, totalImages, imgRate)
+	t.Logf("QR codes decoded:          %d/%d (%.1f%%)", totalDecoded, totalExpected, decodeRate)
+}
+
+// TestDatasetDetectionOnly verifies that the detector returns at least one
+// result for every image in the dataset, exercising the ONNX inference and
+// post-processing path independently of content correctness.
+func TestDatasetDetectionOnly(t *testing.T) {
+	entries, err := os.ReadDir(datasetDir)
+	if err != nil {
+		t.Fatalf("reading dataset dir: %v", err)
+	}
+
+	for _, entry := range entries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".jpg" {
+			continue
+		}
+		name := entry.Name()
+		stem := strings.TrimSuffix(name, ".jpg")
+		imgPath := filepath.Join(datasetDir, name)
+
+		t.Run(stem, func(t *testing.T) {
+			results, err := sharedReader.DetectAndDecodeFile(imgPath)
+			if err != nil {
+				t.Errorf("%s: DetectAndDecodeFile error: %v", stem, err)
+				return
+			}
+			if len(results) == 0 {
+				t.Errorf("%s: expected at least one detection, got none", stem)
+			}
+		})
+	}
+}
+
+// BenchmarkDataset measures end-to-end throughput of DetectAndDecodeFile over
+// the full dataset using DefaultConfig.
+//
+// Run with:
+//
+//	go test -tags integration -bench=BenchmarkDataset -benchmem -benchtime=3x .
+//
+// The benchmark reports ns/op for one complete pass over the dataset.
+// Per-image latency = ns/op / images/op.
+func BenchmarkDataset(b *testing.B) {
+	if sharedReader == nil {
+		b.Skip("QReader not available")
+	}
+
+	imagePaths := collectImagePaths(b)
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		for _, path := range imagePaths {
+			if _, err := sharedReader.DetectAndDecodeFile(path); err != nil {
+				b.Errorf("DetectAndDecodeFile(%s): %v", path, err)
+			}
+		}
+	}
+	b.ReportMetric(float64(len(imagePaths)), "images/op")
+}
+
+// BenchmarkDatasetMinimal benchmarks the fast path using MinimalConfig
+// (no scaling, no perspective correction). Compare against BenchmarkDataset
+// to measure the cost of the full preprocessing pipeline.
+func BenchmarkDatasetMinimal(b *testing.B) {
+	imagePaths := collectImagePaths(b)
+
+	minReader, err := gqreader.NewFromFile(modelPath, gqreader.MinimalConfig())
+	if err != nil {
+		b.Skipf("could not create minimal QReader: %v", err)
+	}
+	defer minReader.Close()
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		for _, path := range imagePaths {
+			if _, err := minReader.DetectAndDecodeFile(path); err != nil {
+				b.Errorf("DetectAndDecodeFile(%s): %v", path, err)
+			}
+		}
+	}
+	b.ReportMetric(float64(len(imagePaths)), "images/op")
+}
+
+// collectImagePaths returns the sorted list of .jpg paths in datasetDir.
+func collectImagePaths(tb testing.TB) []string {
+	tb.Helper()
+	entries, err := os.ReadDir(datasetDir)
+	if err != nil {
+		tb.Fatalf("reading dataset dir: %v", err)
+	}
+	var paths []string
+	for _, e := range entries {
+		if !e.IsDir() && filepath.Ext(e.Name()) == ".jpg" {
+			paths = append(paths, filepath.Join(datasetDir, e.Name()))
+		}
+	}
+	return paths
+}

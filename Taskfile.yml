@@ -114,6 +114,20 @@ tasks:
     cmds:
       - go test -bench=. -benchmem ./qrdet/...
 
+  test-integration:
+    desc: Run integration tests against the full dataset (requires ONNX model)
+    deps: [model]
+    cmds:
+      - go test -v -tags integration -timeout 300s ./...
+
+  bench-integration:
+    desc: Benchmark full dataset throughput (requires ONNX model)
+    deps: [model]
+    vars:
+      BENCH_TIME: '{{.BENCH_TIME | default "3x"}}'
+    cmds:
+      - go test -tags integration -bench=. -benchmem -benchtime={{.BENCH_TIME}} -run=^$ ./...
+
   # ---------------------------------------------------------------------------
   # Development
   # ---------------------------------------------------------------------------
