@@ -73,7 +73,7 @@ func (q *QReader) DetectAndDecode(img *qrdet.ImageSource) ([]QRResult, error) {
 		return nil, nil
 	}
 
-	mat := img.Mat()
+	mat := img.MatRef()
 	return q.decodeAll(mat, detections), nil
 }
 

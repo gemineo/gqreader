@@ -23,9 +23,9 @@ func TestNewImageFromMat(t *testing.T) {
 	if img.Height() != 100 {
 		t.Errorf("Height() = %d, want 100", img.Height())
 	}
-	m := img.Mat()
+	m := img.MatRef()
 	if m.Empty() {
-		t.Error("Mat() is empty")
+		t.Error("MatRef() is empty")
 	}
 }
 

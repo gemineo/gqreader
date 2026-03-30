@@ -189,15 +189,10 @@ func (i *ImageSource) Height() int {
 	return i.mat.Rows()
 }
 
-// Mat returns the underlying gocv.Mat.
-// The returned Mat is NOT a copy — do not close it separately.
-// Use this for advanced operations that need direct Mat access.
-func (i *ImageSource) Mat() gocv.Mat {
-	return i.mat
-}
-
-// toMat returns the internal gocv.Mat.
-// This is an internal method used by the detector, not part of the public API.
-func (i *ImageSource) toMat() gocv.Mat {
+// MatRef returns a reference to the underlying gocv.Mat.
+// The returned Mat is NOT a copy — the caller must not close it independently,
+// and must not use it after the ImageSource has been closed.
+// Use this for advanced operations that require direct Mat access.
+func (i *ImageSource) MatRef() gocv.Mat {
 	return i.mat
 }

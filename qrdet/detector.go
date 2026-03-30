@@ -102,7 +102,7 @@ func (d *Detector) Detect(img *ImageSource) ([]Detection, error) {
 	}
 
 	// Convert ImageSource to internal gocv.Mat
-	mat := img.toMat()
+	mat := img.mat
 	if mat.Empty() {
 		return nil, fmt.Errorf("input image is empty")
 	}
