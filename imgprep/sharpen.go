@@ -11,8 +11,9 @@ import (
 // Uses the kernel: [[-1,-1,-1],[-1,9,-1],[-1,-1,-1]]
 // which matches Python QReader's _SHARPEN_KERNEL.
 type Sharpen struct {
-	// Strength controls the sharpening intensity. Default 1.0.
+	// Strength controls the sharpening intensity.
 	// Values > 1.0 increase sharpening, values < 1.0 decrease it.
+	// Zero or negative values default to 1.0.
 	Strength float64
 }
 

@@ -20,9 +20,14 @@ import (
 //
 // Reference: Sauvola, J., & Pietikäinen, M. (2000). Adaptive document image binarization.
 type SauvolaThreshold struct {
-	WindowSize int     // Local window size, must be odd, default 15
-	K          float64 // Sensitivity parameter, default 0.2. Increase (up to 0.5) for noisy images.
-	R          float64 // Dynamic range of standard deviation, default 128
+	// WindowSize is the local neighbourhood size. Must be positive and odd.
+	// Zero or negative values default to 15; even values are rounded up to the next odd number.
+	WindowSize int
+	// K is the sensitivity parameter. Increase toward 0.5 for noisy images.
+	// Zero or negative values default to 0.2.
+	K float64
+	// R is the dynamic range of the standard deviation. Zero or negative values default to 128.
+	R float64
 }
 
 func (s *SauvolaThreshold) Name() string {
@@ -160,8 +165,12 @@ func (s *SauvolaThreshold) Apply(src gocv.Mat) (gocv.Mat, error) {
 //
 // where k is typically negative (-0.2) for document binarization.
 type NiblackThreshold struct {
-	WindowSize int     // Local window size, must be odd, default 15
-	K          float64 // Sensitivity parameter, default -0.2 (negative for document binarization)
+	// WindowSize is the local neighbourhood size. Must be positive and odd.
+	// Zero or negative values default to 15; even values are rounded up to the next odd number.
+	WindowSize int
+	// K is the sensitivity parameter. Negative values are normal for document binarization.
+	// Zero (the Go zero value) defaults to -0.2.
+	K float64
 }
 
 func (n *NiblackThreshold) Name() string {
@@ -271,8 +280,11 @@ func (n *NiblackThreshold) Apply(src gocv.Mat) (gocv.Mat, error) {
 //
 //	T(x,y) = mean(x,y) + k * (mean(x,y) - min_gray) * (stddev(x,y) / max_stddev - 1)
 type WolfThreshold struct {
-	WindowSize int     // Local window size, must be odd, default 15
-	K          float64 // Sensitivity parameter, default 0.5
+	// WindowSize is the local neighbourhood size. Must be positive and odd.
+	// Zero or negative values default to 15; even values are rounded up to the next odd number.
+	WindowSize int
+	// K is the sensitivity parameter. Zero or negative values default to 0.5.
+	K float64
 }
 
 func (w *WolfThreshold) Name() string {

@@ -36,8 +36,11 @@ func (g *Grayscale) Apply(src gocv.Mat) (gocv.Mat, error) {
 
 // GaussianBlur applies Gaussian blur for noise reduction.
 type GaussianBlur struct {
-	KernelSize int     // Must be odd, default 3
-	SigmaX     float64 // Default 0 (auto-calculated from kernel size)
+	// KernelSize is the blur kernel size. Must be positive and odd.
+	// Zero or negative values default to 3; even values are rounded up to the next odd number.
+	KernelSize int
+	// SigmaX is the Gaussian standard deviation on the X axis. 0 means auto from KernelSize.
+	SigmaX float64
 }
 
 func (g *GaussianBlur) Name() string {
@@ -69,7 +72,9 @@ func (g *GaussianBlur) Apply(src gocv.Mat) (gocv.Mat, error) {
 // MedianBlur applies median filter for salt-and-pepper noise removal.
 // Particularly effective for fax documents.
 type MedianBlur struct {
-	KernelSize int // Must be odd, default 3
+	// KernelSize is the median filter aperture. Must be positive and odd.
+	// Zero or negative values default to 3; even values are rounded up to the next odd number.
+	KernelSize int
 }
 
 func (m *MedianBlur) Name() string {
@@ -100,7 +105,9 @@ func (m *MedianBlur) Apply(src gocv.Mat) (gocv.Mat, error) {
 // FastNlMeansDenoising applies non-local means denoising.
 // Excellent for scan noise but computationally expensive.
 type FastNlMeansDenoising struct {
-	H float32 // Filter strength, default 10. Higher = more denoising but may blur details.
+	// H is the filter strength. Higher values denoise more but may blur fine details.
+	// Zero or negative values default to 10.
+	H float32
 }
 
 func (f *FastNlMeansDenoising) Name() string {
@@ -145,8 +152,12 @@ func (f *FastNlMeansDenoising) Apply(src gocv.Mat) (gocv.Mat, error) {
 // CLAHE applies Contrast Limited Adaptive Histogram Equalization.
 // The gold standard for document enhancement with uneven lighting.
 type CLAHE struct {
-	ClipLimit float64 // Default 2.0, increase for low-contrast docs (up to 4.0)
-	TileSize  int     // Default 8 (8x8 grid)
+	// ClipLimit controls contrast amplification. Increase toward 4.0 for low-contrast images.
+	// Zero or negative values default to 2.0.
+	ClipLimit float64
+	// TileSize is the grid tile size for local histogram equalisation (NxN tiles).
+	// Zero or negative values default to 8.
+	TileSize int
 }
 
 func (c *CLAHE) Name() string {
@@ -232,9 +243,14 @@ func (o *OtsuThreshold) Apply(src gocv.Mat) (gocv.Mat, error) {
 // AdaptiveThreshold applies local adaptive thresholding.
 // Much better than Otsu for documents with uneven lighting.
 type AdaptiveThreshold struct {
-	BlockSize int     // Must be odd, default 11
-	C         float64 // Constant subtracted from mean, default 2
-	Method    gocv.AdaptiveThresholdType
+	// BlockSize is the neighbourhood size. Must be positive and odd.
+	// Zero or negative values default to 11; even values are rounded up to the next odd number.
+	BlockSize int
+	// C is the constant subtracted from the weighted mean. Zero is treated as unset and
+	// defaults to 2; use a small non-zero value if you need C near zero.
+	C float64
+	// Method is the local averaging method. Zero value defaults to AdaptiveThresholdGaussian.
+	Method gocv.AdaptiveThresholdType
 }
 
 func (a *AdaptiveThreshold) Name() string {
@@ -299,7 +315,8 @@ func (a *AdaptiveThreshold) Apply(src gocv.Mat) (gocv.Mat, error) {
 // MorphOpen applies morphological opening (erosion then dilation).
 // Removes small white noise spots.
 type MorphOpen struct {
-	KernelSize int // Default 3
+	// KernelSize is the structuring element size. Zero or negative values default to 3.
+	KernelSize int
 }
 
 func (m *MorphOpen) Name() string {
@@ -329,7 +346,8 @@ func (m *MorphOpen) Apply(src gocv.Mat) (gocv.Mat, error) {
 // MorphClose applies morphological closing (dilation then erosion).
 // Fills small holes in black regions.
 type MorphClose struct {
-	KernelSize int // Default 3
+	// KernelSize is the structuring element size. Zero or negative values default to 3.
+	KernelSize int
 }
 
 func (m *MorphClose) Name() string {
@@ -363,7 +381,8 @@ func (m *MorphClose) Apply(src gocv.Mat) (gocv.Mat, error) {
 // RotationSearch generates rotated variants of the image.
 // Useful for documents that may be slightly skewed.
 type RotationSearch struct {
-	Angles []float64 // Rotation angles in degrees, default [-5, -2, 2, 5]
+	// Angles lists the rotation angles to try, in degrees. Nil or empty defaults to [-5, -2, 2, 5].
+	Angles []float64
 }
 
 func (r *RotationSearch) Name() string {
@@ -420,7 +439,8 @@ func rotateImage(src gocv.Mat, angleDeg float64) gocv.Mat {
 
 // Deskew attempts to correct document rotation using Hough line detection.
 type Deskew struct {
-	MaxAngle float64 // Maximum correction angle, default 15 degrees
+	// MaxAngle is the maximum skew correction angle in degrees. Zero or negative defaults to 15.
+	MaxAngle float64
 }
 
 func (d *Deskew) Name() string { return "deskew" }

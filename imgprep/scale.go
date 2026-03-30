@@ -14,15 +14,15 @@ import (
 // Default factors match Python QReader: {0.5, 2, 0.25, 3, 4}.
 // Scale factor 1.0 is excluded since the original image is tried separately.
 type ScaleVariants struct {
-	// Factors lists the scale factors to apply. Default: {0.5, 2, 0.25, 3, 4}.
+	// Factors lists the scale factors to apply. Nil or empty defaults to {0.5, 2, 0.25, 3, 4}.
 	Factors []float64
 
 	// MinSize is the minimum allowed dimension (width or height) after scaling.
-	// Scales producing images smaller than this are skipped. Default: 25.
+	// Variants producing images smaller than this are skipped. Zero or negative defaults to 25.
 	MinSize int
 
 	// MaxSize is the maximum allowed dimension after scaling.
-	// Scales producing images larger than this are skipped. Default: 1024.
+	// Variants producing images larger than this are skipped. Zero or negative defaults to 1024.
 	MaxSize int
 }
 
