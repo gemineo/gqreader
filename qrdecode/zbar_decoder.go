@@ -45,6 +45,26 @@ import (
 //
 // Each ZBarDecoder instance is NOT safe for concurrent use.
 // The QReader pipeline creates a new instance per goroutine via DecoderFactory.
+//
+// # Known limitation: ISO-8859-1 byte sequences that form valid Shift-JIS
+//
+// When a QR code uses byte mode to store ISO-8859-1 (Latin-1) data, ZBar may
+// misidentify the encoding if the raw bytes happen to form valid Shift-JIS
+// double-byte sequences. For example, 'á' (U+00E1) is encoded as 0xE1 in
+// Latin-1; if followed by a byte in [0x40–0xFC] such as 'l' (0x6C), ZBar
+// treats the pair as a Shift-JIS character (獺, U+7B7A) rather than the
+// correct Latin-1 value.
+//
+// OpenCV QRCodeDetector handles this correctly by converting the raw byte
+// payload to UTF-8 using the QR code's declared encoding. Python QReader
+// works around the ZBar bug by re-encoding the ZBar output through Big5
+// ("encode as Big5, decode as UTF-8"), which coincidentally recovers the
+// original Latin-1 value for some Western characters. This workaround is
+// not principled and does not generalise.
+//
+// Callers that must decode QR codes containing ISO-8859-1 Central or Eastern
+// European characters should use DefaultConfig() (OpenCV decoder) instead of
+// ZBarConfig(). This affects image QR2c in Dataset-QR-2020.
 type ZBarDecoder struct {
 	scanner *C.zbar_image_scanner_t
 }
