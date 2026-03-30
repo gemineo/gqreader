@@ -37,10 +37,26 @@ func cropBBox(img gocv.Mat, det qrdet.Detection) gocv.Mat {
 func cropPerspective(img gocv.Mat, det qrdet.Detection) gocv.Mat {
 	quad := det.PaddedQuad()
 
-	// Compute output side length from quad dimensions
+	// Compute output side length from quad dimensions.
 	side := perspectiveSide(quad)
 	if side < 1 {
 		return gocv.NewMat()
+	}
+
+	// Cap the output side to 3× the detection's bbox size to prevent runaway
+	// WarpPerspective when a noise outlier in the segmentation mask pushes a
+	// padded-quad corner far outside the detection region. The bbox crop covers
+	// the same QR code region without the perspective correction, so quality
+	// loss from capping is limited to the rarely-exercised perspective path.
+	bbox := det.BBox()
+	bboxW := bbox[2] - bbox[0]
+	bboxH := bbox[3] - bbox[1]
+	bboxMax := bboxW
+	if bboxH > bboxMax {
+		bboxMax = bboxH
+	}
+	if maxSide := int(3 * bboxMax); side > maxSide && maxSide >= 1 {
+		side = maxSide
 	}
 
 	srcPts := gocv.NewPoint2fVectorFromPoints([]gocv.Point2f{

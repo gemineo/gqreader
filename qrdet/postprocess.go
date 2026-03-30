@@ -1,6 +1,7 @@
 package qrdet
 
 import (
+	"image"
 	"math"
 
 	"gocv.io/x/gocv"
@@ -221,7 +222,13 @@ func generateMask(
 // This matches Python's cv2.findContours(RETR_EXTERNAL, CHAIN_APPROX_SIMPLE) as used by
 // Ultralytics' mask.xy[0] accessor for segmentation polygon extraction.
 //
-// Returns points in model input space (640x640).
+// The mask arrives at prototype resolution (160×160) cropped to the detection bbox.
+// Before extracting the contour, the mask is upsampled to model-input resolution
+// (invScale × prototype dimensions, typically 4×). This matches Python's approach of
+// calling FindContours on the full 640×640 mask: the finer polygon captures sub-pixel
+// tilt in the QR boundary that the coarse 4-pixel grid would otherwise flatten.
+//
+// Returns points in model input space (640×640).
 func maskToPolygon(
 	mask gocv.Mat,
 	cx, cy, w, h float32,
@@ -242,8 +249,25 @@ func maskToPolygon(
 		return bboxFallback()
 	}
 
+	protoSize := modelPrototypeSize
+	scale := float32(protoSize) / float32(inputSize)
+	offsetX := (cx - w/2) * scale
+	offsetY := (cy - h/2) * scale
+	invScale := float32(inputSize) / float32(protoSize)
+
+	// Upsample the prototype-resolution crop to model-input resolution before contour
+	// extraction. At prototype resolution each pixel spans invScale (=4) model pixels,
+	// which produces ~20 coarse polygon points and a flat-bottom artefact that prevents
+	// the quad fitter from detecting tilted QR codes. At model resolution the polygon
+	// has ~4× more points and faithfully represents the true QR boundary tilt.
+	upW := int(float32(mask.Cols()) * invScale)
+	upH := int(float32(mask.Rows()) * invScale)
+	upsampled := gocv.NewMat()
+	defer upsampled.Close()
+	gocv.Resize(mask, &upsampled, image.Pt(upW, upH), 0, 0, gocv.InterpolationNearestNeighbor)
+
 	// Find contours — same algorithm as Python's cv2.findContours
-	contours := gocv.FindContours(mask, gocv.RetrievalExternal, gocv.ChainApproxSimple)
+	contours := gocv.FindContours(upsampled, gocv.RetrievalExternal, gocv.ChainApproxSimple)
 	defer contours.Close()
 
 	if contours.Size() == 0 {
@@ -268,20 +292,31 @@ func maskToPolygon(
 		return bboxFallback()
 	}
 
-	// Transform contour points from mask space (cropped bbox in prototype space)
-	// back to model input space (640x640)
-	protoSize := modelPrototypeSize
-	scale := float32(protoSize) / float32(inputSize)
-	offsetX := (cx - w/2) * scale
-	offsetY := (cy - h/2) * scale
-	invScale := float32(inputSize) / float32(protoSize)
+	// Simplify the upsampled contour with Ramer-Douglas-Peucker before quad fitting.
+	// A QR code boundary at 4× resolution can have hundreds of collinear pixels that
+	// add no geometric information — they slow the convex hull and Nelder-Mead in
+	// proportion to their count. ε=1 removes single-pixel rounding artefacts while
+	// preserving edge geometry, including sub-prototype-pixel tilt deviations.
+	approx := gocv.ApproxPolyDP(contour, 1.0, true)
+	defer approx.Close()
+	if approx.Size() < 3 {
+		return bboxFallback()
+	}
 
-	points := make([][2]float32, contour.Size())
-	for i := 0; i < contour.Size(); i++ {
-		p := contour.At(i)
-		px := (float32(p.X) + offsetX) * invScale
-		py := (float32(p.Y) + offsetY) * invScale
-		points[i] = [2]float32{px, py}
+	// After upsampling by invScale, contour point p is already in model-input space
+	// relative to the top-left of the bbox. Adding the bbox top-left (offsetX*invScale)
+	// gives absolute model-space coordinates.
+	modelOffsetX := offsetX * invScale // = cx - w/2
+	modelOffsetY := offsetY * invScale // = cy - h/2
+
+	n := approx.Size()
+	points := make([][2]float32, n)
+	for i := 0; i < n; i++ {
+		p := approx.At(i)
+		points[i] = [2]float32{
+			float32(p.X) + modelOffsetX,
+			float32(p.Y) + modelOffsetY,
+		}
 	}
 
 	return points
