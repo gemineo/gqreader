@@ -69,11 +69,16 @@ to the expected decoded content of all QR codes it contains.
 
 ### Obtaining the Dataset
 
-Contact the dataset maintainer or refer to the `gqreader-benchmark`
-companion project for acquisition instructions. The dataset may not be
-redistributed without permission.
+Download the archive and unzip it:
 
-Once obtained, place the files so that the directory structure matches:
+```
+https://ram-verlag.org/wp-content/uploads/Dataset-QR-2020.zip
+```
+
+Reference publication: Krüger, B. (2020). *Location and Recognition of QR Codes in 2D Images*.
+https://ram-verlag.org/wp-content/uploads/vol-8-022-1_location_and_recognition.pdf
+
+Once downloaded, place the files so that the directory structure matches:
 
 ```
 <repo-root>/
