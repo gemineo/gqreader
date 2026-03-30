@@ -1,0 +1,7 @@
+# ONNX model directory for go:embed
+# Run 'make model' to export the QRdet model here.
+#
+# Files:
+#   - qrdet-s.onnx : ONNX model (exported from PyTorch)
+#
+# This file is not committed to git due to its size (~20-50MB).

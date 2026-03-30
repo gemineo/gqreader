@@ -1,0 +1,202 @@
+version: "3"
+
+vars:
+  BIN_DIR: bin
+  BINARY_NAME: qrdetect
+  BINARY_PATH: "{{.BIN_DIR}}/{{.BINARY_NAME}}"
+  PYTHON: python3
+  VENV: .venv
+  PYTHON_VENV: "{{.VENV}}/bin/python"
+  MODEL_CACHE_DIR: models
+  MODEL_PT: "{{.MODEL_CACHE_DIR}}/qrdet-s.pt"
+  MODEL_EMBED_DIR: qrdet/models
+  MODEL_ONNX: "{{.MODEL_EMBED_DIR}}/qrdet-s.onnx"
+  MODEL_URL: https://github.com/Eric-Canas/qrdet/releases/download/v2.0_release/qrdet-s.pt
+
+tasks:
+  default:
+    desc: Download deps, export model, build and test
+    cmds:
+      - task: deps
+      - task: model
+      - task: build
+      - task: test
+
+  # ---------------------------------------------------------------------------
+  # Model Management
+  # ---------------------------------------------------------------------------
+
+  model:download:
+    desc: Download QRdet PyTorch weights
+    status:
+      - test -f {{.MODEL_PT}}
+    cmds:
+      - echo "==> Downloading QRdet model..."
+      - mkdir -p {{.MODEL_CACHE_DIR}}
+      - curl -L {{.MODEL_URL}} -o {{.MODEL_PT}}
+      - echo "==> Model downloaded to {{.MODEL_PT}}"
+
+  model:
+    desc: Download QRdet weights and export to ONNX
+    deps: [model:download]
+    sources:
+      - "{{.MODEL_PT}}"
+      - scripts/export_model.py
+    generates:
+      - "{{.MODEL_ONNX}}"
+    cmds:
+      - echo "==> Exporting model to ONNX format..."
+      - mkdir -p {{.MODEL_EMBED_DIR}}
+      - "{{.PYTHON_VENV}} scripts/export_model.py --output {{.MODEL_ONNX}}"
+      - echo "==> Model exported to {{.MODEL_ONNX}}"
+
+  setup-python:
+    desc: Setup Python venv for model export
+    cmds:
+      - echo "==> Setting up Python virtual environment..."
+      - "{{.PYTHON}} -m venv {{.VENV}}"
+      - "{{.VENV}}/bin/pip install --upgrade pip"
+      - "{{.VENV}}/bin/pip install ultralytics onnx requests tqdm"
+      - 'echo "==> Python environment ready. Activate with: source {{.VENV}}/bin/activate"'
+      - 'echo "==> Note: onnxsim is optional (requires cmake). Model export works without it."'
+
+  # ---------------------------------------------------------------------------
+  # Dependencies
+  # ---------------------------------------------------------------------------
+
+  deps:
+    desc: Download Go dependencies
+    cmds:
+      - echo "==> Downloading Go dependencies..."
+      - go mod download
+      - go mod tidy
+      - echo "==> Dependencies installed"
+
+  # ---------------------------------------------------------------------------
+  # Build
+  # ---------------------------------------------------------------------------
+
+  build:
+    desc: Build CLI binary (dev mode, model from file)
+    cmds:
+      - echo "==> Building {{.BINARY_NAME}} (dev mode)..."
+      - mkdir -p {{.BIN_DIR}}
+      - go build -o {{.BINARY_PATH}} ./cmd/qrdetect
+      - echo "==> Built {{.BINARY_PATH}}"
+
+  build-embedded:
+    desc: Build CLI with embedded model (-tags embed_model)
+    deps: [model]
+    cmds:
+      - echo "==> Building {{.BINARY_NAME}} with embedded model..."
+      - mkdir -p {{.BIN_DIR}}
+      - go build -tags embed_model -o {{.BINARY_PATH}} ./cmd/qrdetect
+      - echo "==> Built {{.BINARY_PATH}} with embedded model"
+
+  # ---------------------------------------------------------------------------
+  # Testing
+  # ---------------------------------------------------------------------------
+
+  test:
+    desc: Run all tests
+    cmds:
+      - go test -v ./...
+
+  test-coverage:
+    desc: Run tests with coverage report
+    cmds:
+      - go test -v -coverprofile=coverage.out ./...
+      - go tool cover -html=coverage.out -o coverage.html
+      - 'echo "==> Coverage report: coverage.html"'
+
+  bench:
+    desc: Run benchmarks
+    cmds:
+      - go test -bench=. -benchmem ./qrdet/...
+
+  test-integration:
+    desc: Run integration tests against the full dataset (requires ONNX model)
+    deps: [model]
+    cmds:
+      - go test -v -tags integration -timeout 300s ./...
+
+  bench-integration:
+    desc: Benchmark full dataset throughput (requires ONNX model)
+    deps: [model]
+    vars:
+      BENCH_TIME: '{{.BENCH_TIME | default "3x"}}'
+    cmds:
+      - go test -tags integration -bench=. -benchmem -benchtime={{.BENCH_TIME}} -run=^$ ./...
+
+  bench-providers:
+    desc: Compare all execution providers (CPU, CoreML ALL, CoreML CPU, CoreML GPU)
+    deps: [model]
+    vars:
+      BENCH_TIME: '{{.BENCH_TIME | default "3x"}}'
+    cmds:
+      - go test -tags integration -bench="^BenchmarkDataset" -benchmem -benchtime={{.BENCH_TIME}} -run=^$ ./...
+
+  bench-env:
+    desc: "Benchmark using QREADER_PROVIDER env var (e.g. QREADER_PROVIDER=coreml task bench-env)"
+    desc: "Providers: cpu (default), coreml, cuda, tensorrt, directml, openvino"
+    deps: [model]
+    vars:
+      BENCH_TIME: '{{.BENCH_TIME | default "3x"}}'
+      PROVIDER: '{{.QREADER_PROVIDER | default "cpu"}}'
+    cmds:
+      - QREADER_PROVIDER={{.PROVIDER}} go test -tags integration -bench="^BenchmarkDataset$" -benchmem -benchtime={{.BENCH_TIME}} -run=^$ ./...
+
+  # ---------------------------------------------------------------------------
+  # Development
+  # ---------------------------------------------------------------------------
+
+  run-test:
+    desc: "Run detection on a test image (INPUT=path OUTPUT=path)"
+    deps: [build]
+    requires:
+      vars: [INPUT]
+    vars:
+      OUTPUT: '{{.OUTPUT | default "output.png"}}'
+    cmds:
+      - "{{.BINARY_PATH}} -input {{.INPUT}} -output {{.OUTPUT}}"
+
+  run-dev:
+    desc: "Run detection with explicit model path (INPUT=path OUTPUT=path)"
+    deps: [build]
+    requires:
+      vars: [INPUT]
+    vars:
+      OUTPUT: '{{.OUTPUT | default "output.png"}}'
+    cmds:
+      - "{{.BINARY_PATH}} -model {{.MODEL_ONNX}} -input {{.INPUT}} -output {{.OUTPUT}}"
+
+  lint:
+    desc: Run golangci-lint
+    cmds:
+      - golangci-lint run ./...
+
+  fmt:
+    desc: Format code
+    cmds:
+      - go fmt ./...
+
+  # ---------------------------------------------------------------------------
+  # Cleanup
+  # ---------------------------------------------------------------------------
+
+  clean:
+    desc: Remove build artifacts
+    cmds:
+      - go clean
+      - rm -rf {{.BIN_DIR}}
+      - rm -f coverage.out coverage.html
+      - echo "==> Clean complete"
+
+  clean-all:
+    desc: Remove all artifacts including models and Python venv
+    deps: [clean]
+    cmds:
+      - rm -rf {{.MODEL_CACHE_DIR}}
+      - rm -rf {{.MODEL_EMBED_DIR}}/*.onnx
+      - rm -rf {{.VENV}}
+      - echo "==> Full clean complete"

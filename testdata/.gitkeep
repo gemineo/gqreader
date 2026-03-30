@@ -1,0 +1,13 @@
+# Test data directory
+# Place test images with QR codes here for validation.
+#
+# Suggested structure:
+#   testdata/
+#   ├── qrcodes/
+#   │   ├── simple.png      # Single QR code, good lighting
+#   │   ├── multiple.png    # Multiple QR codes
+#   │   ├── rotated.png     # Rotated QR code
+#   │   ├── partial.png     # Partially visible QR code
+#   │   └── difficult.png   # Low contrast, small size
+#   └── expected/
+#       └── simple.json     # Expected detection results

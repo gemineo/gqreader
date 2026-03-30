@@ -1,47 +1,51 @@
-# Go build output
-/bin/
-/Darwin/
-/Linux/
-/Windows/
+# Binaries
+bin/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+qrdetect
 
-# Go test output
-/test/
-/test.exe
-/test.bin
+# Test binary, built with `go test -c`
+*.test
 
-# Go coverage output
-/coverage.txt
+# Output of the go coverage tool
+*.out
+coverage.html
+coverage.out
 
-# Go module download cache
-/pkg/mod/
+# Go workspace file
+go.work
+go.work.sum
 
-# ONNX Runtime and other CGO libraries
-/models/
-
-# IDE files
+# IDE
 .idea/
 .vscode/
+*.swp
+*.swo
+*~
 
-# Build artifacts
-*.o
-*.a
+# Python (for model export scripts)
+.venv/
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
 
-# Archive files
-*.zip
-*.tar.gz
+# Models (too large for git, should be downloaded or generated)
+models/
+qrdet/models/
 
-# Log files
-*.log
+# OS
+.DS_Store
+Thumbs.db
 
 # Temporary files
 *.tmp
-*.swp
+*.bak
+*.log
+benchmarks/
 
-# Environment files
-.env
-.venv/
-
-# Screenshots
-*.png
-*.jpg
-*.jpeg
+# Test datasets (not redistributed — see INTEGRATION_TESTING.md for acquisition)
+testdata/Dataset-QR-2020/
