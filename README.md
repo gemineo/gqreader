@@ -1,485 +1,508 @@
-# gQReader - Go QR Code Detection Library
+# gQReader — Go QR Code Detection & Decoding Library
 
 [![Go Reference](https://pkg.go.dev/badge/github.com/gemineo/gqreader.svg)](https://pkg.go.dev/github.com/gemineo/gqreader)
 [![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL%203.0-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 
-A Go port of the Python [QReader](https://github.com/Eric-Canas/QReader/) library for high-accuracy QR code detection using YOLOv8, without Docker or Python runtime dependencies.
-
-> **Current Version**: v0.x (API in active development)
+> ⚠️ **Work in progress — API unstable**
 >
-> The API is currently in v0.x phase and may undergo breaking changes. We recommend using accessor methods (`det.GetConfidence()`) instead of direct field access for future compatibility. See the [API Migration Guide](#api-migration-guide) below.
+> This project is in early development. The API, package structure, configuration types, and
+> binary formats are all subject to **breaking changes at any time and without notice**.
+> Do not use in production. Feedback and contributions are welcome, but expect churn.
 
-## What is QReader?
+A Go port of the Python [QReader](https://github.com/Eric-Canas/QReader/) library: high-accuracy QR code detection and decoding using YOLOv8, without Docker or Python runtime dependencies.
 
-**QReader** is a high-accuracy QR code detection and reading system that combines:
+---
 
-1. **QRdet**: A YOLOv8-based neural network that locates QR codes in images with high precision
-2. **Image Preprocessing**: Intelligent image transformation (contrast, threshold, resizing) to optimize detection (not implemented yet)
-3. **QR Decoding**: Reads the QR code content once located (not implemented yet)
+## Why gQReader?
 
-This Go implementation aims at maintaining full compatibility with the original Python QReader.
+### vs. Python QReader
+
+| Metric | gQReader (ZBar + CoreML) | Python QReader |
+|--------|--------------------------|----------------|
+| Images decoded | 95/99 **(96.0%)** | 96/99 (97.0%) |
+| QR codes decoded | 554/595 **(93.1%)** | 581/595 (97.6%) |
+| Throughput | **37 ms/img** | 159 ms/img |
+| Speedup | **4.3× faster** | baseline |
+| Runtime dependencies | OpenCV, ONNX Runtime, libzbar | Python, PyTorch, ultralytics, pyzbar |
+| Deployment | Single binary | Python virtual environment |
+
+*Measured on Apple Silicon M3 Pro, Dataset-QR-2020 (99 images, 595 QR codes), 10 benchmark iterations. See [Benchmark Notes](#benchmark-notes) for methodology and platform limitations.*
+
+### vs. zbar Alone (No YOLO Detection)
+
+| Metric | gQReader (ZBar + YOLO) | zbar standalone |
+|--------|------------------------|-----------------|
+| Images decoded | **96.0%** | 86.9% |
+| QR codes decoded | **93.1%** | 40.5% |
+| Damaged/partial QR (QR6 dataset, 6 images) | **6/6** | 0/6 |
+
+The YOLO preprocessing step is essential. Damaged or partially occluded QR codes (broken finder
+patterns, low contrast, skewed perspective) are detected reliably only because YOLO localises the
+QR region first, even when the barcode is not directly scannable. Without YOLO, zbar cannot find
+them at all.
+
+### Benchmark Notes
+
+> **Platform**: All benchmarks were run on **Apple Silicon M3 Pro** only. Benchmarks on other
+> architectures (Linux x86-64 / AMD64, NVIDIA GPU, Intel, ARM Linux) have not yet been performed
+> due to lack of available hardware. Results on those platforms will be added in a future update.
+
+**Methodology**: each configuration was run for **10 complete passes** over the full 99-image
+dataset (990 image processing calls per configuration). Measurements were taken in isolation, one
+configuration at a time, to avoid contention. Raw Go benchmark output:
+
+```
+BenchmarkDataset-11              10   27915457754 ns/op   99.00 images/op   # CPU + OpenCV
+BenchmarkDatasetZBar-11          10   14503552275 ns/op   99.00 images/op   # CPU + ZBar
+BenchmarkDatasetCoreML-11        10   18166656908 ns/op   99.00 images/op   # CoreML ALL + OpenCV
+BenchmarkDatasetZBarCoreML-11    10    3705074292 ns/op   99.00 images/op   # CoreML ALL + ZBar
+BenchmarkDatasetMinimal-11       10   15262272729 ns/op   99.00 images/op   # Minimal (no preproc)
+BenchmarkDatasetCoreMLCPU-11     10   20795136238 ns/op   99.00 images/op   # CoreML CPU-only
+BenchmarkDatasetCoreMLGPU-11     10   18150495267 ns/op   99.00 images/op   # CoreML CPUAndGPU
+```
+
+Python QReader reference (159 ms/img) is from a separate run and is not part of the Go benchmark
+suite. Python was measured under similar but not identical conditions.
+
+---
+
+## Performance Summary (Apple M3 Pro)
+
+| Configuration | ms/img | vs. Python QReader | Notes |
+|--------------|--------|--------------------|-------|
+| **ZBarConfig + CoreML ALL** | **37** | **4.3× faster** | Recommended on Apple Silicon |
+| ZBarConfig + CPU | 147 | 1.1× faster | Portable, all platforms |
+| DefaultConfig + CoreML ALL | 184 | — | OpenCV decoder, CoreML inference |
+| DefaultConfig + CPU | 282 | 1.8× slower | OpenCV decoder, CPU inference |
+| MinimalConfig (no preproc) | 154 | — | No scaling / perspective (−6pp accuracy) |
+| CoreML CPU-only | 210 | — | CoreML graph, CPU execution |
+| CoreML CPUAndGPU | 183 | — | GPU offload, no ANE |
+| **Python QReader** | **159** | baseline | ultralytics + Apple MPS + pyzbar |
+
+**Key insight — ZBar unlocks CoreML's full benefit**: with OpenCV as the decoder, CoreML saves
+98 ms/img (282 → 184 ms). With ZBar as the decoder, CoreML saves 110 ms/img more (147 → 37 ms).
+When OpenCV's multi-scale decode loop is the dominant cost, CoreML's inference speedup is masked.
+Switching to ZBar makes ONNX inference the bottleneck again, so CoreML provides a much larger
+relative gain.
+
+---
+
+## Accuracy Summary (Dataset-QR-2020, 99 images, 595 QR codes)
+
+| Configuration | Images | QR codes |
+|--------------|--------|----------|
+| gQReader (ZBar decoder) | 95/99 (96.0%) | 554/595 (93.1%) |
+| gQReader (OpenCV decoder) | 89/99 (89.9%) | 531/595 (89.2%) |
+| Python QReader | 96/99 (97.0%) | 581/595 (97.6%) |
+| zbar standalone (no YOLO) | 86/99 (86.9%) | 241/595 (40.5%) |
+
+The accuracy is **decoder-independent**: CoreML, CPU, and all other execution providers produce
+identical detections. The provider selection only affects inference speed.
+
+---
+
+## What Is QReader?
+
+gQReader combines three stages:
+
+1. **Detection** — A YOLOv8-seg neural network (QRdet) localises every QR code in the image with bounding box, segmentation polygon, and confidence score.
+2. **Preprocessing** — The detected crop is subjected to a brute-force pipeline of scale factors and image transformations (grayscale, contrast, thresholding, sharpening, inversion) to maximise decode success on degraded or difficult images.
+3. **Decoding** — The prepared crop is decoded by a backend (OpenCV or ZBar).
+
+---
 
 ## Quick Start
 
 ### Prerequisites
 
-Before you begin, ensure you have:
+| Dependency | Purpose | Required? |
+|-----------|---------|-----------|
+| Go 1.24+ | Build | Yes |
+| OpenCV | Image processing (GoCV) | Yes |
+| ONNX Runtime | YOLOv8 inference | Yes |
+| libzbar | Fast QR decoding | Optional (strongly recommended) |
+| Python 3.8+ | One-time model export | Yes (one-time setup only) |
+| Task | Build automation | Recommended |
 
-- **Go 1.25+**
-- **macOS or Linux** (Windows support can be added)
-- **Python 3.8+** (only needed for model export, one-time setup)
-- **OpenCV** (for image processing via GoCV)
-- **ONNX Runtime** (for AI model inference)
+### Installation
 
-### Installation Steps
+#### 1. Install System Libraries
 
-#### 1. Clone the Repository
+**macOS (Homebrew):**
 
 ```bash
-cd /path/to/your/projects
+brew install opencv onnxruntime zbar
+```
+
+> `zbar` is optional. If you skip it, use `DefaultConfig()` (OpenCV decoder) instead of
+> `ZBarConfig()`. You will lose ~6 percentage points of accuracy and the decoding step will be
+> 3–5× slower.
+
+**Linux (Debian/Ubuntu):**
+
+```bash
+sudo apt-get install libopencv-dev libzbar-dev
+```
+
+For ONNX Runtime on Linux, download the prebuilt package from the
+[official releases](https://github.com/microsoft/onnxruntime/releases) and install to `/usr/local`
+or set `CGO_LDFLAGS` to point to the library directory.
+
+#### 2. Install Task (build automation)
+
+```bash
+# macOS
+brew install go-task
+
+# Linux / other
+sh -c "$(curl --location https://taskfile.dev/install.sh)" -- -d -b /usr/local/bin
+```
+
+#### 3. Clone and Download Go Dependencies
+
+```bash
 git clone https://github.com/gemineo/gqreader.git
 cd gqreader
+task deps
 ```
 
-#### 2. Install System Dependencies
+#### 4. Export the ONNX Model (One-Time Setup)
 
-**macOS:**
+The YOLOv8 model is distributed as a PyTorch `.pt` file and must be converted to ONNX format
+once. This requires Python and the Ultralytics package (for model export only — Python is **not**
+required at runtime after this step).
 
 ```bash
-# Install OpenCV using Homebrew
-brew install opencv
+# Step 1: Create a Python virtual environment and install conversion tools
+task setup-python
+# Installs: ultralytics, onnx, requests, tqdm into .venv/
 
-# Install ONNX Runtime
-brew install onnx-runtime
+# Step 2: Download the QRdet weights and export to ONNX
+task model
+# Downloads: models/qrdet-s.pt (~24 MB) from GitHub releases
+# Exports:   qrdet/models/qrdet-s.onnx (~47 MB)
 ```
 
-**Linux (Ubuntu/Debian):**
+This step:
+- Requires an internet connection
+- Runs only once; subsequent builds reuse the cached ONNX file
+- Creates a Python virtual environment in `.venv/` that can be removed afterwards
+
+If you already have a Python environment with `ultralytics` installed, you can export manually:
 
 ```bash
-# Install OpenCV
-sudo apt-get install libopencv-dev
-
-# Install ONNX Runtime
-sudo apt-get install libonnxruntime-dev
+python scripts/export_model.py --output qrdet/models/qrdet-s.onnx
 ```
 
-#### 3. Setup Go Dependencies
+#### 5. Build
 
 ```bash
-# Download Go module dependencies
-make deps
+# Development build: loads model from file at startup (~4.5 MB binary)
+task build
+
+# Production build: model embedded in binary via go:embed (~52 MB, no external files)
+task build-embedded
 ```
 
-#### 4. Prepare the AI Model (One-Time Setup)
+---
 
-The project needs to download and convert the YOLOv8 QR detection model:
+## Using gQReader
 
-```bash
-# Setup Python environment with ML tools
-make setup-python
+### As a Library
 
-# Download QRdet model and export to ONNX format
-make model
+#### End-to-End Detection and Decoding
+
+```go
+package main
+
+import (
+    "fmt"
+    "log"
+    "github.com/gemineo/gqreader"
+)
+
+func main() {
+    // ZBarConfig: recommended — uses libzbar for 3-5× faster decoding
+    // DefaultConfig: portable — uses OpenCV (no libzbar required)
+    qr, err := gqreader.New(gqreader.ZBarConfig())
+    if err != nil {
+        log.Fatal(err)
+    }
+    defer qr.Close()
+
+    results, err := qr.DetectAndDecodeFile("photo.jpg")
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    for _, r := range results {
+        if r.Decoded {
+            fmt.Printf("QR: %s (confidence: %.0f%%, strategy: %s)\n",
+                r.Content, r.Detection.GetConfidence()*100, r.Strategy)
+        } else {
+            fmt.Printf("detected but not decoded (confidence: %.0f%%)\n",
+                r.Detection.GetConfidence()*100)
+        }
+    }
+}
 ```
 
-This will:
+#### Detection Only (Without Decoding)
 
-- Create a Python virtual environment (`.venv/`)
-- Download the QRdet model (~24 MB)
-- Convert it to ONNX format (~47 MB)
-- Validate the converted model
+```go
+detector, err := qrdet.NewDetector(qrdet.DefaultConfig())
+if err != nil {
+    log.Fatal(err)
+}
+defer detector.Close()
 
-**Note**: This step requires an internet connection and takes 2-5 minutes.
-
-#### 5. Build the Application
-
-```bash
-# Build the command-line tool (development mode)
-make build
-
-# Or build with embedded model (single standalone binary)
-make build-embedded
+detections, err := detector.DetectFile("photo.jpg")
+for i, det := range detections {
+    fmt.Printf("QR %d: conf=%.0f%% bbox=%v center=%v\n",
+        i+1, det.GetConfidence()*100, det.BBox(), det.Center())
+}
 ```
 
-This creates a `qrdetect` executable.
+#### Hardware Acceleration (Apple Silicon, NVIDIA, Intel)
 
-## Using QReader
+```go
+import "github.com/gemineo/gqreader/qrdet"
 
-### Detect QR Codes in an Image
+// Apple Silicon — CoreML (GPU + Neural Engine), best on macOS
+cfg := gqreader.ZBarConfig()
+cfg.DetectionConfig = qrdet.DefaultConfig().WithProvider(qrdet.CoreMLProviderConfig())
 
-```bash
-# Detect QR codes and save annotated image
-./qrdetect -input photo.jpg -output result.png
+// NVIDIA — CUDA
+cfg.DetectionConfig = qrdet.DefaultConfig().WithProvider(qrdet.CUDAProviderConfig())
 
-# With custom confidence threshold
-./qrdetect -input photo.jpg -output result.png -conf 0.6
-
-# Show results as JSON
-./qrdetect -input photo.jpg -json
-
-# Enable verbose output
-./qrdetect -input photo.jpg -output result.png -v
+// Portable: read provider from the QREADER_PROVIDER environment variable
+//   QREADER_PROVIDER=coreml ./bin/qrdetect -input photo.jpg
+//   QREADER_PROVIDER=cuda   ./bin/qrdetect -input photo.jpg
+cfg.DetectionConfig = qrdet.DefaultConfig().WithProvider(qrdet.ProviderFromEnv())
 ```
 
-### Output Examples
-
-#### Image Output (PNG)
-
-The annotated image shows:
-
-- **Green rectangles**: Bounding boxes of detected QR codes
-- **Blue quadrilaterals**: Precise boundaries of QR code corners
-- **Confidence scores**: Detection confidence (0-100%)
-
-
-#### JSON Output
-
-```bash
-./qrdetect -input photo.jpg -json
-```
-
-Returns:
-
-```json
-[
-  {
-    "index": 1,
-    "confidence": 0.95,
-    "bbox_xyxy": [120, 150, 420, 450],
-    "center_xy": [270, 300],
-    "width_height": [300, 300],
-    "quad_xy": [[120, 150], [420, 150], [420, 450], [120, 450]]
-  }
-]
-```
+---
 
 ## CLI Reference
-
-### Command Syntax
 
 ```
 qrdetect -input <image> [options]
 ```
 
-### Options
-
-
-| Option    | Type   | Default      | Description                             |
-| --------- | ------ | ------------ | --------------------------------------- |
-| `-input`  | string | **required** | Path to input image file                |
-| `-output` | string | `output.png` | Path to save annotated image            |
-| `-model`  | string | (embedded)   | Path to ONNX model (dev mode only)      |
-| `-conf`   | float  | `0.5`        | Confidence threshold (0.0-1.0)          |
-| `-nms`    | float  | `0.3`        | NMS IoU threshold (0.0-1.0)             |
-| `-json`   | bool   | `false`      | Output results as JSON instead of image |
-| `-v`      | bool   | `false`      | Verbose output (debug info)             |
-
-### Examples
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `-input` | string | **required** | Path to input image |
+| `-output` | string | `output.png` | Path for annotated output image |
+| `-model` | string | (embedded) | Path to ONNX model (dev build only) |
+| `-conf` | float | `0.5` | Confidence threshold (0.0–1.0) |
+| `-nms` | float | `0.3` | NMS IoU threshold (0.0–1.0) |
+| `-json` | bool | `false` | Output detections as JSON |
+| `-v` | bool | `false` | Verbose/debug output |
 
 ```bash
-# Basic detection
-./qrdetect -input photo.jpg
+# Annotated image output
+./bin/qrdetect -input photo.jpg -output result.png
 
-# Strict confidence (only high-confidence detections)
-./qrdetect -input photo.jpg -conf 0.8
+# JSON for scripting
+./bin/qrdetect -input photo.jpg -json | jq '.[] | .confidence'
 
-# Development mode with external model
-./qrdetect -model models/qrdet-s.onnx -input photo.jpg
-
-# Get JSON results for programmatic processing
-./qrdetect -input photo.jpg -json | jq '.[] | .confidence'
-
-# All verbosity
-./qrdetect -input photo.jpg -output result.png -v -conf 0.6
+# CoreML acceleration
+QREADER_PROVIDER=coreml ./bin/qrdetect -input photo.jpg -v
 ```
+
+---
 
 ## Development Workflow
 
-### Make Commands
-
-Common build and development commands:
+### Task Commands
 
 ```bash
-# Setup and build
-make setup-python    # One-time Python setup
-make model           # Download and export ONNX model
-make build           # Build CLI (dev mode, external model)
-make build-embedded  # Build CLI with embedded model
+task setup-python       # Create Python venv for model conversion (once)
+task model              # Download and export ONNX model (once)
+task deps               # Download Go module dependencies
 
-# Testing
-make test            # Run unit tests
-make test-coverage   # Run tests with coverage report
-make bench           # Run performance benchmarks
+task build              # Build CLI (dev mode, external model)
+task build-embedded     # Build CLI with embedded model
 
-# Maintenance
-make fmt             # Format code
-make lint            # Run code linter
-make clean           # Remove build artifacts
-make clean-all       # Remove everything including models
-make help            # Show all available commands
+task test               # Run unit tests
+task test-coverage      # Run tests with HTML coverage report
+task test-integration   # Accuracy test against full dataset (requires model)
+task bench              # Unit-level benchmarks
+task bench-integration  # Dataset throughput benchmarks
+
+# Hardware provider benchmarks (Apple Silicon)
+task bench-providers                    # All provider variants
+QREADER_PROVIDER=coreml task bench-env # CoreML only
+
+task fmt                # gofmt
+task lint               # golangci-lint
+task clean              # Remove build artefacts
+task clean-all          # Remove artefacts + models + Python venv
 ```
 
 ### Project Structure
 
 ```
 gqreader/
-├── README.md                 # This file (user guide)
-├── Makefile                  # Build automation
-├── go.mod / go.sum          # Go dependencies
+├── qreader.go              # Main API: QReader, DetectAndDecode*
+├── config.go               # Config, DefaultConfig, ZBarConfig, MinimalConfig
+├── pipeline.go             # Brute-force decode pipeline
+├── result.go               # QRResult type
+├── crop.go                 # BBox and perspective crop helpers
 │
-├── cmd/qrdetect/            # CLI application
-│   └── main.go              # Entry point
+├── qrdet/                  # YOLOv8 detection
+│   ├── detector.go
+│   ├── session.go          # ONNX Runtime wrapper
+│   ├── preprocess.go       # Image → model tensor
+│   ├── postprocess.go      # Tensor → detections (NMS)
+│   ├── provider.go         # Hardware EP config (CoreML, CUDA, …)
+│   ├── types.go
+│   ├── quadrilateral.go
+│   ├── image.go            # ImageSource (file / bytes / Mat)
+│   ├── model.go            # Embedded model (embed_model build tag)
+│   └── models/qrdet-s.onnx # Generated by `task model`
 │
-├── pkg/qrdet/               # Core detection library (reusable)
-│   ├── detector.go          # Main API
-│   ├── types.go             # Data structures
-│   ├── session.go           # ONNX Runtime wrapper
-│   ├── preprocess.go        # Image preparation
-│   ├── postprocess.go       # Detection parsing
-│   ├── quadrilateral.go     # Boundary fitting
-│   ├── model.go             # Embedded model (production)
-│   └── MODEL_FORMAT.md      # Model format documentation
+├── qrdecode/               # QR decoder backends
+│   ├── decoder.go          # Decoder interface
+│   ├── opencv.go           # OpenCV QRCodeDetector
+│   └── zbar_decoder.go     # libzbar (3-5× faster)
 │
-├── internal/                # Internal packages
-│   ├── geometry/            # Geometric utilities
-│   └── mathutil/            # Math operations (NMS, etc.)
-│
-├── scripts/
-│   └── export_model.py      # Model export script (Python)
-│
-├── models/                  # Model files (generated)
-│   ├── qrdet-s.pt          # PyTorch model
-│   └── qrdet-s.onnx        # ONNX model (used by Go)
-│
-└── testdata/                # Test images
-    └── qrcodes/             # Sample QR code images
+├── imgprep/                # Preprocessing strategies
+├── internal/               # geometry, mathutil
+├── cmd/qrdetect/           # CLI
+├── scripts/export_model.py # PyTorch → ONNX (Python, one-time)
+├── models/qrdet-s.pt       # Downloaded weights
+└── testdata/Dataset-QR-2020/
 ```
+
+---
+
+## Hardware Acceleration
+
+| Platform | Provider | `QREADER_PROVIDER` | Notes |
+|----------|----------|--------------------|-------|
+| macOS (Apple Silicon) | `CoreMLProviderConfig()` | `coreml` | GPU + Neural Engine |
+| Linux (NVIDIA GPU) | `CUDAProviderConfig()` | `cuda` | CUDA toolkit required |
+| Linux (NVIDIA, max perf) | `TensorRTProviderConfig()` | `tensorrt` | TensorRT required |
+| Linux/Windows (Intel) | `OpenVINOProviderConfig()` | `openvino` | OpenVINO runtime required |
+| Windows (any GPU) | `DirectMLProviderConfig()` | `directml` | Windows only |
+| All platforms | `CPUProviderConfig()` | `cpu` | Safe portable fallback |
+
+ONNX Runtime falls back to CPU silently if the requested provider is unavailable.
+
+**CoreML compute units** (macOS):
+
+| Value | What runs where | ms/img (M3 Pro) |
+|-------|----------------|-----------------|
+| `"ALL"` (default) | CPU + GPU + Neural Engine | 184 ms (OpenCV), 37 ms (ZBar) |
+| `"CPUAndGPU"` | CPU + GPU, no ANE | 183 ms |
+| `"CPUOnly"` | CoreML graph, CPU execution | 210 ms |
+
+On this M3 Pro, `"ALL"` and `"CPUAndGPU"` are equivalent — the ANE contribution is negligible
+for this model size. Results may differ on other Apple Silicon generations.
+
+---
+
+## Differences from Python QReader
+
+### ZBar ISO-8859-1 / Shift-JIS Encoding Edge Case
+
+When a QR code stores ISO-8859-1 (Latin-1) bytes that happen to form valid Shift-JIS sequences,
+ZBar may misidentify the encoding and return garbled text.
+
+**Example**: the Latin-1 character `á` (0xE1) followed by `l` (0x6C) forms the Shift-JIS
+character `獺`. ZBar returns `獺`; the correct value is `ál`.
+
+Python QReader works around this via a Big5 re-encoding trick that recovers *some* Latin-1 values
+but is not a general solution. gQReader documents this as a known limitation of libzbar itself.
+
+**Affected image in Dataset-QR-2020**: `QR2c`.
+
+**Workaround**: if your QR codes contain Central or Eastern European Latin-1 text, use
+`DefaultConfig()` (OpenCV decoder) instead of `ZBarConfig()`. The OpenCV decoder handles encoding
+correctly.
+
+### Remaining Accuracy Gap
+
+As of 2026-03-30 (ZBar decoder), gQReader scores 95/99 images vs Python QReader's 96/99:
+
+| Image | gQReader (ZBar) | Python QReader | Root cause |
+|-------|----------------|----------------|-----------|
+| QR2c | ❌ | ✅ | ZBar ISO-8859-1 encoding bug (see above) |
+| QR3e | ❌ | ❌ | Both fail |
+| QR3k | ❌ | ❌ | Both fail |
+| QR3q | ❌ | ❌ | Both fail |
+
+Three of the four failing images also fail Python QReader. The only image exclusively failing
+gQReader is `QR2c` (ZBar encoding issue), making the **effective recoverable gap one image**.
+
+---
 
 ## Build Modes
 
-### Development Mode (Smaller Binary)
+| Mode | Command | Binary size | Model source |
+|------|---------|-------------|-------------|
+| Development | `task build` | ~4.5 MB | `qrdet/models/qrdet-s.onnx` (external file) |
+| Production | `task build-embedded` | ~52 MB | Embedded via `go:embed` |
 
-```bash
-make build
-# Binary size: ~4.5 MB
-# Model loaded from: pkg/qrdet/models/qrdet-s.onnx (external file)
-# Use during development, requires model file present
-```
-
-### Production Mode (Standalone Binary)
-
-```bash
-make build-embedded
-# Binary size: ~52 MB
-# Model embedded in binary (via go:embed)
-# Fully self-contained, no external files needed
-# Use for deployment
-```
+---
 
 ## Troubleshooting
 
-### Common Issues
-
-
-#### 2. "ONNX model not found"
-
-```
-Error: no model available
-```
-
-**Solution**: Ensure the model is exported:
+### "ONNX model not found"
 
 ```bash
-make model  # Downloads and exports the model
+task model
 ```
 
-#### 3. OpenCV installation issues (macOS)
-
-If GoCV can't find OpenCV:
+### OpenCV not found (macOS)
 
 ```bash
-# Set paths explicitly
-export CGO_CFLAGS=-I/opt/homebrew/opt/opencv/include
-export CGO_LDFLAGS=-L/opt/homebrew/opt/opencv/lib
-make build
+export CGO_CFLAGS="-I/opt/homebrew/opt/opencv/include/opencv4"
+export CGO_LDFLAGS="-L/opt/homebrew/opt/opencv/lib"
+task build
 ```
 
-#### 4. Python environment issues
+### ONNX Runtime not found
 
 ```bash
-# Recreate Python environment
+brew reinstall onnxruntime
+# or
+export CGO_LDFLAGS="-L/opt/homebrew/opt/onnxruntime/lib"
+```
+
+### libzbar not found (ZBarConfig build errors)
+
+```bash
+# macOS
+brew install zbar
+
+# Linux
+sudo apt-get install libzbar-dev
+```
+
+If you do not want to install libzbar, replace `ZBarConfig()` with `DefaultConfig()` (OpenCV
+decoder) in your code. You will lose ~6 percentage points of accuracy and decoding will be slower.
+
+### Python environment issues (model export)
+
+```bash
 rm -rf .venv
-make setup-python
-make model
+task setup-python
+task model
 ```
 
-#### 5. ONNX Runtime not found
-
-```bash
-# Reinstall ONNX Runtime
-brew reinstall onnx-runtime
-
-# Or set library path
-export LD_LIBRARY_PATH=/opt/homebrew/opt/onnx-runtime/lib:$LD_LIBRARY_PATH
-```
-
-## Performance Notes
-
-### Inference Speed
-
-On Apple M3 Pro (CPU-only):
-
-- **First detection**: ~0.5-1.0 seconds (model loading + inference)
-- **Subsequent detections**: ~0.2-0.3 seconds (model cached)
-- **Image size independence**: Handles any image size (auto-resized to 640×640)
-
-### Memory Usage
-
-- **Model**: ~50 MB (in memory)
-- **Per-image processing**: ~10-20 MB
-- **Total runtime**: ~100 MB baseline
-
-## Limitations and Future Work
-
-### Current Implementation
-
-✅ QR code detection (single format)
-✅ High-precision localization via segmentation
-✅ Bounding box and corner point extraction
-❌ QR code decoding (reads QR content) - planned for Phase 2
-❌ Multiple barcode formats (DataMatrix, Code128, etc.) - requires model retraining
-
-### Future Capabilities
-
-The architecture is designed to support:
-
-- Additional barcode formats (DataMatrix, Code128, Interleaved 2 of 5)
-- QR code content reading/decoding
-- Image preprocessing pipeline optimization
-- GPU acceleration (NVIDIA, Metal Performance Shaders)
-
-See `CLAUDE.md` for technical roadmap and extension path.
-
-## Integration as a Library
-
-To use gQReader as a library in your Go code:
-
-### Basic Usage (Simple)
-
-```go
-package main
-
-import (
-    "fmt"
-    "log"
-    "github.com/gemineo/gqreader/pkg/qrdet"
-)
-
-func main() {
-    // Create detector with default config
-    detector, err := qrdet.NewDetector(qrdet.DefaultConfig())
-    if err != nil {
-        log.Fatal(err)
-    }
-    defer detector.Close()
-
-    // Detect QR codes directly from a file
-    detections, err := detector.DetectFile("photo.jpg")
-    if err != nil {
-        log.Fatal(err)
-    }
-
-    // Process results
-    for i, det := range detections {
-        fmt.Printf("QR Code %d:\n", i+1)
-        fmt.Printf("  Confidence: %.2f%%\n", det.GetConfidence()*100)
-
-        bbox := det.BBox()
-        fmt.Printf("  Bounding box: [%.0f, %.0f, %.0f, %.0f]\n",
-            bbox[0], bbox[1], bbox[2], bbox[3])
-
-        center := det.Center()
-        fmt.Printf("  Center: (%.0f, %.0f)\n", center[0], center[1])
-
-        fmt.Printf("  Area: %.0f px²\n", det.Area())
-        fmt.Printf("  Is square: %v\n", det.IsSquare())
-    }
-}
-```
-
-### Advanced Usage (ImageSource API)
-
-```go
-package main
-
-import (
-    "fmt"
-    "log"
-    "os"
-    "github.com/gemineo/gqreader/pkg/qrdet"
-)
-
-func main() {
-    // Create detector with custom config
-    config := qrdet.DefaultConfig().
-        WithConfidence(0.6).
-        WithNMSIoU(0.3)
-
-    detector, err := qrdet.NewDetector(config)
-    if err != nil {
-        log.Fatal(err)
-    }
-    defer detector.Close()
-
-    // Option 1: Load from file
-    img, err := qrdet.NewImageFromFile("photo.jpg")
-    if err != nil {
-        log.Fatal(err)
-    }
-    defer img.Close()
-
-    // Option 2: Load from memory (bytes)
-    // data, _ := os.ReadFile("photo.jpg")
-    // img, err := qrdet.NewImageFromBytes(data, qrdet.ImageFormatAuto)
-
-    // Run detection
-    detections, err := detector.Detect(img)
-    if err != nil {
-        log.Fatal(err)
-    }
-
-    // Process results with accessor methods
-    for i, det := range detections {
-        fmt.Printf("QR Code %d:\n", i+1)
-
-        // Use accessor methods (recommended)
-        fmt.Printf("  Confidence: %.2f%%\n", det.GetConfidence()*100)
-        fmt.Printf("  Bounding box: %v\n", det.BBox())
-        fmt.Printf("  Center: %v\n", det.Center())
-        fmt.Printf("  Size: %v pixels\n", det.Size())
-        fmt.Printf("  Area: %.0f px²\n", det.Area())
-        fmt.Printf("  Aspect ratio: %.2f\n", det.AspectRatio())
-        fmt.Printf("  Quad corners: %v\n", det.Quad())
-
-        // Access segmentation polygon
-        polygon := det.Polygon()
-        fmt.Printf("  Polygon vertices: %d\n", len(polygon))
-    }
-}
-```
+---
 
 ## License and Attribution
-
-This project is a Go port of the original Python QReader library.
 
 - **Original QReader**: https://github.com/Eric-Canas/QReader/
 - **QRdet (detection model)**: https://github.com/Eric-Canas/qrdet/
 - **ONNX Runtime**: https://onnxruntime.ai/
 - **GoCV (OpenCV bindings)**: https://gocv.io/
 
+Released under GNU AGPL v3 to comply with the Ultralytics YOLOv8 licence (via the QRdet model
+adaptation by Eric Cañas). This may change in the future depending on licence clarification.
 
-This library is released under GNU AGPL v3, to comply with the ultralytics YOLOv8 licence. Whether this is required or not, due to the adaptation of the model by Eric Cañas, is a bit unclear. Hence licence might change in the future.
-
-
-
-```
+See `CLAUDE.md` for technical roadmap, model format documentation, and extension paths for
+multi-format barcode support.
