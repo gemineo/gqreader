@@ -105,10 +105,13 @@ func CPUProviderConfig() ProviderConfig {
 // with all compute units (CPU + GPU + Neural Engine on Apple Silicon).
 // Falls back to CPU automatically when CoreML is not available.
 //
-// Benchmark on Apple M3 Pro (Dataset-QR-2020, 99 images):
+// Benchmark on Apple M3 Pro (Dataset-QR-2020, 99 images, 10 iterations, OpenCV decoder):
 //
-//	CPU:    260 ms/image
-//	CoreML: 170 ms/image  (-35%, near Python/MPS parity at 159 ms)
+//	CPU:          282 ms/image  (baseline)
+//	CoreML ALL:   184 ms/image  (-35%)
+//	Python QReader: 159 ms/image (reference, ultralytics + Apple MPS)
+//
+// Combining CoreML ALL with the ZBar decoder yields 37 ms/image (4.3× faster than Python).
 func CoreMLProviderConfig() ProviderConfig {
 	return ProviderConfig{
 		Provider: ProviderCoreML,
