@@ -94,7 +94,7 @@ func newDetectorFromData(modelData []byte, config Config) (*Detector, error) {
 //
 //	detections, err := detector.Detect(img)
 //	for _, det := range detections {
-//	    fmt.Printf("QR at %v (confidence: %.2f)\n", det.BBoxXYXY, det.Confidence)
+//	    fmt.Printf("QR at %v (confidence: %.2f)\n", det.BBox(), det.GetConfidence())
 //	}
 func (d *Detector) Detect(img *ImageSource) ([]Detection, error) {
 	if img == nil {
@@ -164,14 +164,4 @@ func (d *Detector) Close() error {
 // Config returns the current configuration.
 func (d *Detector) Config() Config {
 	return d.config
-}
-
-// SetConfidenceThreshold updates the confidence threshold for future detections.
-func (d *Detector) SetConfidenceThreshold(threshold float32) {
-	d.config.ConfidenceThreshold = threshold
-}
-
-// SetNMSIoUThreshold updates the NMS IoU threshold for future detections.
-func (d *Detector) SetNMSIoUThreshold(threshold float32) {
-	d.config.NMSIoUThreshold = threshold
 }

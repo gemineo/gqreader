@@ -154,9 +154,10 @@ func main() {
 
 	// Print summary
 	for i, det := range detections {
+		bbox := det.BBox()
 		fmt.Printf("  [%d] confidence=%.2f bbox=[%.0f, %.0f, %.0f, %.0f]\n",
-			i+1, det.Confidence,
-			det.BBoxXYXY[0], det.BBoxXYXY[1], det.BBoxXYXY[2], det.BBoxXYXY[3])
+			i+1, det.GetConfidence(),
+			bbox[0], bbox[1], bbox[2], bbox[3])
 	}
 }
 
@@ -175,11 +176,11 @@ func outputJSON(detections []qrdet.Detection) {
 	for i, det := range detections {
 		output[i] = jsonDetection{
 			Index:       i + 1,
-			Confidence:  det.Confidence,
-			BBoxXYXY:    det.BBoxXYXY,
-			CenterXY:    det.CenterXY,
-			WidthHeight: det.WidthHeight,
-			QuadXY:      det.QuadXY,
+			Confidence:  det.GetConfidence(),
+			BBoxXYXY:    det.BBox(),
+			CenterXY:    det.Center(),
+			WidthHeight: det.Size(),
+			QuadXY:      det.Quad(),
 		}
 	}
 
@@ -200,34 +201,34 @@ func drawDetections(img *gocv.Mat, detections []qrdet.Detection) {
 	bgColor := color.RGBA{R: 0, G: 0, B: 0, A: 255}          // Black background for text
 
 	for i, det := range detections {
+		bbox := det.BBox()
+		quad := det.Quad()
+
 		// Draw bounding box
-		rect := image.Rect(
-			int(det.BBoxXYXY[0]), int(det.BBoxXYXY[1]),
-			int(det.BBoxXYXY[2]), int(det.BBoxXYXY[3]),
-		)
+		rect := image.Rect(int(bbox[0]), int(bbox[1]), int(bbox[2]), int(bbox[3]))
 		gocv.Rectangle(img, rect, bboxColor, 2)
 
 		// Draw quadrilateral
 		for j := 0; j < 4; j++ {
 			k := (j + 1) % 4
-			p1 := image.Pt(int(det.QuadXY[j][0]), int(det.QuadXY[j][1]))
-			p2 := image.Pt(int(det.QuadXY[k][0]), int(det.QuadXY[k][1]))
+			p1 := image.Pt(int(quad[j][0]), int(quad[j][1]))
+			p2 := image.Pt(int(quad[k][0]), int(quad[k][1]))
 			gocv.Line(img, p1, p2, quadColor, 2)
 		}
 
 		// Draw corner points of quad
 		for j := 0; j < 4; j++ {
-			center := image.Pt(int(det.QuadXY[j][0]), int(det.QuadXY[j][1]))
+			center := image.Pt(int(quad[j][0]), int(quad[j][1]))
 			gocv.Circle(img, center, 4, quadColor, -1) // Filled circle
 		}
 
 		// Draw confidence label
-		label := fmt.Sprintf("#%d: %.0f%%", i+1, det.Confidence*100)
-		labelPos := image.Pt(int(det.BBoxXYXY[0]), int(det.BBoxXYXY[1])-8)
+		label := fmt.Sprintf("#%d: %.0f%%", i+1, det.GetConfidence()*100)
+		labelPos := image.Pt(int(bbox[0]), int(bbox[1])-8)
 
 		// Ensure label is visible (not above image)
 		if labelPos.Y < 15 {
-			labelPos.Y = int(det.BBoxXYXY[3]) + 15
+			labelPos.Y = int(bbox[3]) + 15
 		}
 
 		// Draw text background

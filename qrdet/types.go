@@ -18,7 +18,7 @@
 //	}
 //
 //	for _, det := range detections {
-//	    fmt.Printf("QR code at %v with confidence %.2f\n", det.BBoxXYXY, det.Confidence)
+//	    fmt.Printf("QR code at %v with confidence %.2f\n", det.BBox(), det.GetConfidence())
 //	}
 package qrdet
 
