@@ -14,13 +14,15 @@ import (
 // decodeDetection attempts to decode a single detected QR code by trying
 // multiple crop methods, scale factors, and preprocessing flavors.
 //
-// The pipeline matches Python QReader's brute-force approach:
+// The pipeline runs in two phases to keep average latency low:
 //
-//	For each crop (bbox, perspective):
-//	  1. Try direct decode (no preprocessing)
-//	  2. For each scale factor:
-//	     Try each flavor (identity, inversion, gray+otsu+blur, sharpen+gray+blur)
-//	     Return on first success
+//	Phase 1 — primary strategies (fast, covers most real-world QR codes):
+//	  For each crop (bbox, then perspective if enabled):
+//	    1. Direct decode (no preprocessing, no scaling)
+//	    2. For each scale factor: try each primary flavor
+//
+//	Phase 2 — fallback strategies (only when Phase 1 yields nothing):
+//	  For each crop × scale factor: try each fallback flavor
 func decodeDetection(
 	img gocv.Mat,
 	det qrdet.Detection,
@@ -29,7 +31,7 @@ func decodeDetection(
 ) QRResult {
 	result := QRResult{Detection: det}
 
-	// Build list of crops to try
+	// Build list of crops to try.
 	type namedCrop struct {
 		name string
 		mat  gocv.Mat
@@ -54,52 +56,61 @@ func decodeDetection(
 		}
 	}()
 
-	flavors := imgprep.QRDecodeStrategies()
+	scales := config.ScaleFactors
+	if len(scales) == 0 {
+		scales = []float64{1.0}
+	}
 
-	for _, crop := range crops {
-		// 1. Try direct decode on crop (no preprocessing, no scaling)
-		if content, strategy := tryDecode(decoder, crop.mat, crop.name+"/direct"); content != "" {
-			result.Content = content
-			result.Decoded = true
-			result.Strategy = strategy
-			return result
-		}
-
-		// 2. Try each scale factor
-		scales := config.ScaleFactors
-		if len(scales) == 0 {
-			scales = []float64{1.0}
-		}
-
-		for _, scale := range scales {
-			scaled := scaleImage(crop.mat, scale)
-			if scaled.Empty() {
-				continue
+	// attempt tries all crops × scales × flavors and updates result on first success.
+	// When includeDirect is true, each crop is also tried as-is (no preprocessing, no
+	// scaling) before the scale loop — this covers the common easy case cheaply.
+	attempt := func(flavors []imgprep.Strategy, includeDirect bool) bool {
+		for _, crop := range crops {
+			if includeDirect {
+				if content, s := tryDecode(decoder, crop.mat, crop.name+"/direct"); content != "" {
+					result.Content = content
+					result.Decoded = true
+					result.Strategy = s
+					return true
+				}
 			}
 
-			// Try each preprocessing flavor on the scaled image
-			for _, flavor := range flavors {
-				processed, err := flavor.Apply(scaled)
-				if err != nil {
+			for _, scale := range scales {
+				scaled := scaleImage(crop.mat, scale)
+				if scaled.Empty() {
 					continue
 				}
 
-				strategyName := crop.name + "/scale_" + scaleLabel(scale) + "/" + flavor.Name()
-				if content, _ := tryDecode(decoder, processed, strategyName); content != "" {
+				for _, flavor := range flavors {
+					processed, err := flavor.Apply(scaled)
+					if err != nil {
+						continue
+					}
+					sName := crop.name + "/scale_" + scaleLabel(scale) + "/" + flavor.Name()
+					if content, _ := tryDecode(decoder, processed, sName); content != "" {
+						processed.Close()
+						scaled.Close()
+						result.Content = content
+						result.Decoded = true
+						result.Strategy = sName
+						return true
+					}
 					processed.Close()
-					scaled.Close()
-					result.Content = content
-					result.Decoded = true
-					result.Strategy = strategyName
-					return result
 				}
-				processed.Close()
-			}
 
-			scaled.Close()
+				scaled.Close()
+			}
 		}
+		return false
 	}
 
+	// Phase 1: primary strategies (direct decode included).
+	if attempt(imgprep.QRDecodeStrategies(), true) {
+		return result
+	}
+
+	// Phase 2: fallback strategies, only reached when Phase 1 exhausts all options.
+	attempt(imgprep.QRDecodeFallbackStrategies(), false)
 	return result
 }
 

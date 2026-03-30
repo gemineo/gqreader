@@ -63,11 +63,13 @@ func TestAllPresetStrategies(t *testing.T) {
 func TestQRDecodeStrategies(t *testing.T) {
 	strategies := QRDecodeStrategies()
 
-	if len(strategies) != 4 {
-		t.Fatalf("QRDecodeStrategies() returned %d strategies, want 4", len(strategies))
+	if len(strategies) != 5 {
+		t.Fatalf("QRDecodeStrategies() returned %d strategies, want 5", len(strategies))
 	}
 
-	expectedNames := []string{"identity", "inversion", "gray_otsu_blur", "sharpen_gray_blur"}
+	expectedNames := []string{
+		"identity", "inversion", "grayscale", "gray_otsu", "sharpen_gray_blur3",
+	}
 	for i, s := range strategies {
 		if s.Name() != expectedNames[i] {
 			t.Errorf("Strategy[%d].Name() = %q, want %q", i, s.Name(), expectedNames[i])
@@ -85,6 +87,37 @@ func TestQRDecodeStrategies(t *testing.T) {
 			}
 			defer result.Close()
 
+			if result.Empty() {
+				t.Error("Result is empty")
+			}
+		})
+	}
+}
+
+func TestQRDecodeFallbackStrategies(t *testing.T) {
+	strategies := QRDecodeFallbackStrategies()
+
+	if len(strategies) != 4 {
+		t.Fatalf("QRDecodeFallbackStrategies() returned %d strategies, want 4", len(strategies))
+	}
+
+	expectedNames := []string{"gray_blur5", "gray_blur7", "sharpen_gray", "sharpen_gray_otsu"}
+	for i, s := range strategies {
+		if s.Name() != expectedNames[i] {
+			t.Errorf("Strategy[%d].Name() = %q, want %q", i, s.Name(), expectedNames[i])
+		}
+	}
+
+	img := makePresetTestImage(200, 200)
+	defer img.Close()
+
+	for _, s := range strategies {
+		t.Run(s.Name(), func(t *testing.T) {
+			result, err := s.Apply(img)
+			if err != nil {
+				t.Fatalf("Apply failed: %v", err)
+			}
+			defer result.Close()
 			if result.Empty() {
 				t.Error("Result is empty")
 			}
