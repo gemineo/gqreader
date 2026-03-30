@@ -29,6 +29,9 @@ type Config struct {
 	MaxWorkers int
 
 	// DecoderFactory creates a new Decoder instance.
+	// When MaxWorkers > 1, the pipeline calls this factory once per goroutine
+	// so each worker owns its own decoder. Implementations need not be
+	// concurrent-safe, but must be safe for sequential reuse within a single goroutine.
 	// Default: OpenCV QRCodeDetector.
 	DecoderFactory func() (qrdecode.Decoder, error)
 }
@@ -60,6 +63,43 @@ func ZBarConfig() Config {
 		MaxWorkers:      0,
 		DecoderFactory:  func() (qrdecode.Decoder, error) { return qrdecode.NewZBarDecoder() },
 	}
+}
+
+// WithDetectionConfig returns a copy of the config with the given detection config.
+func (c Config) WithDetectionConfig(cfg qrdet.Config) Config {
+	c.DetectionConfig = cfg
+	return c
+}
+
+// WithScaleFactors returns a copy of the config with the given scale factors.
+// Pass nil or no arguments to disable scaling (equivalent to MinimalConfig scaling behaviour).
+func (c Config) WithScaleFactors(factors ...float64) Config {
+	if len(factors) == 0 {
+		c.ScaleFactors = nil
+	} else {
+		c.ScaleFactors = factors
+	}
+	return c
+}
+
+// WithTryPerspective returns a copy of the config with perspective-corrected cropping enabled or disabled.
+func (c Config) WithTryPerspective(v bool) Config {
+	c.TryPerspective = v
+	return c
+}
+
+// WithMaxWorkers returns a copy of the config with the given maximum worker count.
+// 0 means one goroutine per detection (unbounded).
+func (c Config) WithMaxWorkers(n int) Config {
+	c.MaxWorkers = n
+	return c
+}
+
+// WithDecoderFactory returns a copy of the config with the given decoder factory.
+// The factory must produce a new, independent Decoder instance on each call.
+func (c Config) WithDecoderFactory(f func() (qrdecode.Decoder, error)) Config {
+	c.DecoderFactory = f
+	return c
 }
 
 // MinimalConfig returns a fast configuration that skips scaling and perspective correction.
