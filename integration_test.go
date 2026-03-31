@@ -55,9 +55,12 @@ func TestMain(m *testing.M) {
 		//   "zbar"   – libzbar (faster, same library as Python QReader)
 		//   "opencv" – OpenCV QRCodeDetector (default, no extra deps)
 		var cfg gqreader.Config
-		if os.Getenv("QREADER_DECODER") == "zbar" {
+		switch os.Getenv("QREADER_DECODER") {
+		case "zbar":
 			cfg = gqreader.ZBarConfig()
-		} else {
+		case "harder", "chain":
+			cfg = gqreader.HarderConfig()
+		default:
 			cfg = gqreader.DefaultConfig()
 		}
 		cfg.DetectionConfig = cfg.DetectionConfig.WithProvider(qrdet.ProviderFromEnv())

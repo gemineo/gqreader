@@ -25,6 +25,9 @@ import (
 	"github.com/gemineo/gqreader/qrdet"
 )
 
+// appendWeChatFallback is defined in wechat.go (built with -tags wechat) or
+// wechat_stub.go (default build). It appends WeChatDecoder as a fallback decoder.
+
 func main() {
 	inputPath := flag.String("input", "", "Input image path (required)")
 	outputPath := flag.String("output", "", "Output annotated image path (optional)")
@@ -32,6 +35,8 @@ func main() {
 	confThreshold := flag.Float64("conf", 0.5, "Confidence threshold (0.0-1.0)")
 	jsonOutput := flag.Bool("json", false, "Output results as JSON")
 	minimal := flag.Bool("minimal", false, "Use minimal config (faster, skip scaling/perspective)")
+	harder := flag.Bool("harder", false, "Enable fallback decoder chain (ZBar→OpenCV). Higher accuracy on difficult images, slightly higher latency.")
+	wechatModels := flag.String("wechat-models", os.Getenv("QREADER_WECHAT_MODELS"), "Path to WeChatQR Caffe model directory (3rd fallback for curved/tiny QR; requires -tags wechat build)")
 	verbose := flag.Bool("v", false, "Verbose output")
 
 	flag.Usage = func() {
@@ -59,12 +64,18 @@ func main() {
 
 	// Build config
 	var config gqreader.Config
-	if *minimal {
+	switch {
+	case *minimal:
 		config = gqreader.MinimalConfig()
-	} else {
+	case *harder:
+		config = gqreader.HarderConfig()
+	default:
 		config = gqreader.DefaultConfig()
 	}
 	config.DetectionConfig = config.DetectionConfig.WithConfidence(float32(*confThreshold))
+	if *harder && *wechatModels != "" {
+		config = appendWeChatFallback(config, *wechatModels)
+	}
 
 	if *verbose {
 		fmt.Printf("Configuration: conf=%.2f, perspective=%v, scales=%v\n",

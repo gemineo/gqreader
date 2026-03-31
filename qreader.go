@@ -121,6 +121,9 @@ func (q *QReader) decodeAll(img gocv.Mat, detections []qrdet.Detection) []QRResu
 		results := make([]QRResult, len(detections))
 		for i, det := range detections {
 			results[i] = decodeDetection(img, det, q.decoder, q.config)
+			if q.config.TryHarder {
+				results[i] = q.retryWithFallbacks(img, det, results[i])
+			}
 		}
 		return deduplicateResults(results)
 	}
@@ -150,12 +153,40 @@ func (q *QReader) decodeAll(img gocv.Mat, detections []qrdet.Detection) []QRResu
 			}
 			defer dec.Close()
 
-			results[idx] = decodeDetection(img, d, dec, q.config)
+			result := decodeDetection(img, d, dec, q.config)
+			if q.config.TryHarder {
+				result = q.retryWithFallbacks(img, d, result)
+			}
+			results[idx] = result
 		}(i, det)
 	}
 
 	wg.Wait()
 	return deduplicateResults(results)
+}
+
+// retryWithFallbacks runs each fallback decoder factory in order and returns the
+// first fallback result that decodes something. If no fallback succeeds, the
+// original primary result (decoded or not) is returned unchanged.
+//
+// Fallback decoders are tried even when the primary already decoded, because the
+// primary may have returned a structurally valid but mis-encoded result (e.g. ZBar
+// converting ISO-8859-1 byte sequences to Shift-JIS Unicode characters). The first
+// fallback decoder that produces a non-empty result wins, since later decoders in
+// the chain (such as OpenCV or WeChatQR) typically have more robust encoding support.
+func (q *QReader) retryWithFallbacks(img gocv.Mat, det qrdet.Detection, primary QRResult) QRResult {
+	for _, factory := range q.config.FallbackDecoderFactories {
+		fbDec, err := factory()
+		if err != nil {
+			continue
+		}
+		r := decodeDetection(img, det, fbDec, q.config)
+		fbDec.Close()
+		if r.Decoded {
+			return r
+		}
+	}
+	return primary
 }
 
 // deduplicateResults removes duplicate decoded QR codes.

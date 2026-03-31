@@ -547,6 +547,180 @@ func TestDecodeDetection_NoPerspective(t *testing.T) {
 	}
 }
 
+// mockDecoderFactory returns a factory and a pointer to a call counter.
+func mockDecoderFactory(results []qrdecode.DecodedQR) (func() (qrdecode.Decoder, error), *int) {
+	calls := new(int)
+	return func() (qrdecode.Decoder, error) {
+		*calls++
+		return &mockDecoder{results: results}, nil
+	}, calls
+}
+
+func TestRetryWithFallbacks_FallbackSucceeds(t *testing.T) {
+	img := gocv.NewMatWithSize(400, 400, gocv.MatTypeCV8UC3)
+	defer img.Close()
+	img.SetTo(gocv.NewScalar(128, 128, 128, 0))
+
+	det := qrdet.Detection{
+		Confidence: 0.9,
+		BBoxXYXY:   [4]float32{50, 50, 350, 350},
+	}
+	failed := QRResult{Detection: det, Decoded: false}
+
+	fallbackFactory, calls := mockDecoderFactory([]qrdecode.DecodedQR{{Content: "FALLBACK"}})
+
+	q := &QReader{
+		config: Config{
+			TryHarder:                true,
+			FallbackDecoderFactories: []func() (qrdecode.Decoder, error){fallbackFactory},
+			ScaleFactors:             []float64{1.0},
+			TryPerspective:           false,
+		},
+	}
+
+	result := q.retryWithFallbacks(img, det, failed)
+
+	if !result.Decoded {
+		t.Error("Expected fallback to decode successfully")
+	}
+	if result.Content != "FALLBACK" {
+		t.Errorf("Content = %q, want %q", result.Content, "FALLBACK")
+	}
+	if *calls != 1 {
+		t.Errorf("fallback factory called %d times, want 1", *calls)
+	}
+}
+
+func TestRetryWithFallbacks_StopsOnFirstSuccess(t *testing.T) {
+	img := gocv.NewMatWithSize(400, 400, gocv.MatTypeCV8UC3)
+	defer img.Close()
+	img.SetTo(gocv.NewScalar(128, 128, 128, 0))
+
+	det := qrdet.Detection{
+		Confidence: 0.9,
+		BBoxXYXY:   [4]float32{50, 50, 350, 350},
+	}
+	failed := QRResult{Detection: det, Decoded: false}
+
+	firstFactory, firstCalls := mockDecoderFactory([]qrdecode.DecodedQR{{Content: "FIRST"}})
+	secondFactory, secondCalls := mockDecoderFactory([]qrdecode.DecodedQR{{Content: "SECOND"}})
+
+	q := &QReader{
+		config: Config{
+			TryHarder:                true,
+			FallbackDecoderFactories: []func() (qrdecode.Decoder, error){firstFactory, secondFactory},
+			ScaleFactors:             []float64{1.0},
+			TryPerspective:           false,
+		},
+	}
+
+	result := q.retryWithFallbacks(img, det, failed)
+
+	if result.Content != "FIRST" {
+		t.Errorf("Content = %q, want FIRST (should stop at first success)", result.Content)
+	}
+	if *firstCalls != 1 {
+		t.Errorf("first factory called %d times, want 1", *firstCalls)
+	}
+	if *secondCalls != 0 {
+		t.Errorf("second factory called %d times, want 0 (should not be reached)", *secondCalls)
+	}
+}
+
+func TestRetryWithFallbacks_AllFail(t *testing.T) {
+	img := gocv.NewMatWithSize(400, 400, gocv.MatTypeCV8UC3)
+	defer img.Close()
+	img.SetTo(gocv.NewScalar(128, 128, 128, 0))
+
+	det := qrdet.Detection{
+		Confidence: 0.9,
+		BBoxXYXY:   [4]float32{50, 50, 350, 350},
+	}
+	failed := QRResult{Detection: det, Decoded: false}
+
+	// All fallback decoders return nothing
+	emptyFactory, _ := mockDecoderFactory(nil)
+
+	q := &QReader{
+		config: Config{
+			TryHarder:                true,
+			FallbackDecoderFactories: []func() (qrdecode.Decoder, error){emptyFactory, emptyFactory},
+			ScaleFactors:             []float64{1.0},
+			TryPerspective:           false,
+		},
+	}
+
+	result := q.retryWithFallbacks(img, det, failed)
+
+	if result.Decoded {
+		t.Error("Expected decoded=false when all fallbacks fail")
+	}
+}
+
+// TestRetryWithFallbacks_FallbackOverridesMisEncodedPrimary verifies that the
+// fallback is run even when the primary decoded successfully, so that a decoder
+// with better encoding support (e.g. OpenCV) can override a mis-encoded ZBar
+// result (e.g. Shift-JIS conversion artifacts).
+func TestRetryWithFallbacks_FallbackOverridesMisEncodedPrimary(t *testing.T) {
+	img := gocv.NewMatWithSize(400, 400, gocv.MatTypeCV8UC3)
+	defer img.Close()
+	img.SetTo(gocv.NewScalar(128, 128, 128, 0))
+
+	det := qrdet.Detection{
+		Confidence: 0.9,
+		BBoxXYXY:   [4]float32{50, 50, 350, 350},
+	}
+
+	// Simulate ZBar returning a decoded result that is valid UTF-8 but with wrong
+	// characters due to Shift-JIS misidentification (獺 instead of ál).
+	misEncodedResult := QRResult{
+		Detection: det,
+		Decoded:   true,
+		Content:   "Som sexu\u7b7alny", // 獺 is U+7B7A, a common Shift-JIS artifact
+	}
+
+	fallbackFactory, calls := mockDecoderFactory([]qrdecode.DecodedQR{{Content: "Som sexuálny"}})
+
+	q := &QReader{
+		config: Config{
+			TryHarder:                true,
+			FallbackDecoderFactories: []func() (qrdecode.Decoder, error){fallbackFactory},
+			ScaleFactors:             []float64{1.0},
+			TryPerspective:           false,
+		},
+	}
+
+	result := q.retryWithFallbacks(img, det, misEncodedResult)
+
+	if result.Content != "Som sexuálny" {
+		t.Errorf("Content = %q, want correct UTF-8 from fallback", result.Content)
+	}
+	if *calls != 1 {
+		t.Errorf("fallback factory called %d times, want 1", *calls)
+	}
+}
+
+func TestRetryWithFallbacks_NoFactories(t *testing.T) {
+	img := gocv.NewMatWithSize(100, 100, gocv.MatTypeCV8UC3)
+	defer img.Close()
+
+	det := qrdet.Detection{}
+	failed := QRResult{Detection: det, Decoded: false}
+
+	q := &QReader{
+		config: Config{
+			TryHarder:                true,
+			FallbackDecoderFactories: nil,
+		},
+	}
+
+	result := q.retryWithFallbacks(img, det, failed)
+
+	if result.Decoded {
+		t.Error("Expected decoded=false with no factories")
+	}
+}
+
 func TestQRResult_Struct(t *testing.T) {
 	r := QRResult{
 		Detection: qrdet.Detection{Confidence: 0.95},
