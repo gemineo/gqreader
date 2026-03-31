@@ -271,8 +271,11 @@ Measured on Dataset-QR-2020 (99 images, 595 QR codes). Full data in
 |------|-------------|-----------|-----------|
 | gqreader DefaultConfig (OpenCV decoder) | 88/99 (88.9%) | 526/595 (88.4%) | 256 ms |
 | gqreader MinimalConfig | 47/99 (47.5%) | 307/595 (51.6%) | 151 ms |
-| Python QReader (original) | 96/99 (97.0%) | 581/595 (97.6%) | 159 ms |
+| Python QReader (original) | 97/99 (98.0%) | 582/595 (97.8%) | 205 ms | ¹ |
 | zbar standalone (no YOLO) | 86/99 (86.9%) | 241/595 (40.5%) | 45 ms |
+
+¹ Re-run on 2026-03-31 with corrected QR3k annotation (`\r\nhttp://www.jrs.co.jp/\r\n`).
+Original 2026-03-29 run incorrectly reported 96/99 due to annotation mismatch on QR3k.
 
 ## Optimized Results (2026-03-29, feat/onnx-optimization)
 
@@ -282,8 +285,8 @@ After ZBar decoder integration, CoreML EP, and generateMask 4.4× optimization:
 |--------------|-------------|-----------|-----------|-------|
 | CPU + OpenCV (baseline) | 88/99 (88.9%) | 526/595 (88.4%) | 256 ms | |
 | CPU + ZBar | 94/99 (94.9%) | 553/595 (92.9%) | 136 ms | +6pp accuracy, 1.9× faster |
-| CoreML ALL + ZBar | 94/99 (94.9%) | 553/595 (92.9%) | **33 ms** | **4.8× faster than Python** |
-| Python QReader | 96/99 (97.0%) | 581/595 (97.6%) | 159 ms | Target |
+| CoreML ALL + ZBar | 94/99 (94.9%) | 553/595 (92.9%) | **33 ms** | **6× faster than Python** |
+| Python QReader | 97/99 (98.0%) | 582/595 (97.8%) | 205 ms | Reference ¹ |
 
 **Gap to Python QReader**: narrowed from 8.1pp → 2.1pp with ZBar decoder.
 Remaining 2.1pp gap (QR2c, QR3c, QR3e, QR3k, QR3q): QR3e/k/q also fail Python;
@@ -297,7 +300,7 @@ After TryHarder fallback chain (ZBar primary → OpenCV fallback):
 |--------------|-------------|-----------|-----------|-------|
 | CoreML + HarderConfig (ZBar→OpenCV) | **98/99 (99.0%)** | **560/595 (94.1%)** | ~50 ms | Exceeds Python QReader on image accuracy |
 | CoreML ALL + ZBar (plain) | 96/99 (97.0%) | 558/595 (93.8%) | ~50 ms | Previous best |
-| Python QReader | 96/99 (97.0%) | 581/595 (97.6%) | 159 ms | Reference |
+| Python QReader 3.16 | 97/99 (98.0%) | 582/595 (97.8%) | 205 ms | Reference (corrected from 96/99 — QR3k annotation was wrong) |
 
 **Remaining failure** (1 image, irreducible):
 - **QR3q**: Cylindrical distortion (cup surface) — also fails Python QReader and WeChatQR
