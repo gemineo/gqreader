@@ -137,14 +137,55 @@ tasks:
       - go test -tags integration -bench="^BenchmarkDataset" -benchmem -benchtime={{.BENCH_TIME}} -run=^$ ./...
 
   bench-env:
-    desc: "Benchmark using QREADER_PROVIDER env var (e.g. QREADER_PROVIDER=coreml task bench-env)"
-    desc: "Providers: cpu (default), coreml, cuda, tensorrt, directml, openvino"
+    desc: "Benchmark using QREADER_PROVIDER env var. Providers: cpu (default), coreml, cuda, tensorrt, directml, openvino"
     deps: [model]
     vars:
       BENCH_TIME: '{{.BENCH_TIME | default "3x"}}'
       PROVIDER: '{{.QREADER_PROVIDER | default "cpu"}}'
     cmds:
       - QREADER_PROVIDER={{.PROVIDER}} go test -tags integration -bench="^BenchmarkDataset$" -benchmem -benchtime={{.BENCH_TIME}} -run=^$ ./...
+
+  # ---------------------------------------------------------------------------
+  # Harder decode / WeChatQR exploration
+  # ---------------------------------------------------------------------------
+
+  bench-harder:
+    desc: "Benchmark fallback decoder chain: ZBar primary + OpenCV fallback (QREADER_PROVIDER overridable)"
+    deps: [model]
+    vars:
+      BENCH_TIME: '{{.BENCH_TIME | default "3x"}}'
+      PROVIDER: '{{.QREADER_PROVIDER | default "coreml"}}'
+    cmds:
+      - QREADER_DECODER=harder QREADER_PROVIDER={{.PROVIDER}} go test -tags integration -bench="^BenchmarkDataset$" -benchmem -benchtime={{.BENCH_TIME}} -run=^$ ./...
+
+  wechat-models:
+    desc: "Download WeChatQR Caffe model files (~10 MB) into models/wechat/"
+    vars:
+      WECHAT_DIR: models/wechat
+      BASE_URL: https://raw.githubusercontent.com/WeChatCV/opencv_3rdparty/wechat_qrcode
+    status:
+      - test -f models/wechat/detect.caffemodel
+    cmds:
+      - mkdir -p models/wechat
+      - curl -L {{.BASE_URL}}/detect.prototxt   -o models/wechat/detect.prototxt
+      - curl -L {{.BASE_URL}}/detect.caffemodel -o models/wechat/detect.caffemodel
+      - curl -L {{.BASE_URL}}/sr.prototxt        -o models/wechat/sr.prototxt
+      - curl -L {{.BASE_URL}}/sr.caffemodel      -o models/wechat/sr.caffemodel
+
+  bench-wechat:
+    desc: "Benchmark with WeChatQR as 3rd fallback (ZBar→OpenCV→WeChat). Requires: task wechat-models"
+    deps: [model, wechat-models]
+    vars:
+      BENCH_TIME: '{{.BENCH_TIME | default "3x"}}'
+      PROVIDER: '{{.QREADER_PROVIDER | default "coreml"}}'
+    cmds:
+      - QREADER_DECODER=harder QREADER_WECHAT_MODELS=models/wechat QREADER_PROVIDER={{.PROVIDER}} go test -tags "integration wechat" -bench="^BenchmarkDataset$" -benchmem -benchtime={{.BENCH_TIME}} -run=^$ ./...
+
+  test-harder:
+    desc: "Run integration tests with harder decode chain against QR2c and QR3k"
+    deps: [model]
+    cmds:
+      - QREADER_DECODER=harder QREADER_PROVIDER=coreml go test -tags integration -run "TestDatasetDecodeAll/QR2c|TestDatasetDecodeAll/QR3k|TestDatasetDecodeAll/QR3q" -v -timeout 60s ./...
 
   # ---------------------------------------------------------------------------
   # Development

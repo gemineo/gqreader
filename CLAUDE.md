@@ -271,8 +271,11 @@ Measured on Dataset-QR-2020 (99 images, 595 QR codes). Full data in
 |------|-------------|-----------|-----------|
 | gqreader DefaultConfig (OpenCV decoder) | 88/99 (88.9%) | 526/595 (88.4%) | 256 ms |
 | gqreader MinimalConfig | 47/99 (47.5%) | 307/595 (51.6%) | 151 ms |
-| Python QReader (original) | 96/99 (97.0%) | 581/595 (97.6%) | 159 ms |
+| Python QReader (original) | 97/99 (98.0%) | 582/595 (97.8%) | 205 ms | ¹ |
 | zbar standalone (no YOLO) | 86/99 (86.9%) | 241/595 (40.5%) | 45 ms |
+
+¹ Re-run on 2026-03-31 with corrected QR3k annotation (`\r\nhttp://www.jrs.co.jp/\r\n`).
+Original 2026-03-29 run incorrectly reported 96/99 due to annotation mismatch on QR3k.
 
 ## Optimized Results (2026-03-29, feat/onnx-optimization)
 
@@ -282,32 +285,46 @@ After ZBar decoder integration, CoreML EP, and generateMask 4.4× optimization:
 |--------------|-------------|-----------|-----------|-------|
 | CPU + OpenCV (baseline) | 88/99 (88.9%) | 526/595 (88.4%) | 256 ms | |
 | CPU + ZBar | 94/99 (94.9%) | 553/595 (92.9%) | 136 ms | +6pp accuracy, 1.9× faster |
-| CoreML ALL + ZBar | 94/99 (94.9%) | 553/595 (92.9%) | **33 ms** | **4.8× faster than Python** |
-| Python QReader | 96/99 (97.0%) | 581/595 (97.6%) | 159 ms | Target |
+| CoreML ALL + ZBar | 94/99 (94.9%) | 553/595 (92.9%) | **33 ms** | **6× faster than Python** |
+| Python QReader | 97/99 (98.0%) | 582/595 (97.8%) | 205 ms | Reference ¹ |
 
 **Gap to Python QReader**: narrowed from 8.1pp → 2.1pp with ZBar decoder.
 Remaining 2.1pp gap (QR2c, QR3c, QR3e, QR3k, QR3q): QR3e/k/q also fail Python;
 QR2c and QR3c are the two images where the preprocessing pipeline diverges.
 
-## Current Best Results (2026-03-31, master)
+## Current Best Results (2026-03-31, feat/harder-decode)
 
-After two-phase decode strategy split and extended Phase 2 fallback set:
+After TryHarder fallback chain (ZBar primary → OpenCV fallback):
 
 | Configuration | Images pass% | QR codes % | Avg ms/img | Notes |
 |--------------|-------------|-----------|-----------|-------|
-| CoreML ALL + ZBar | **96/99 (97.0%)** | **558/595 (93.8%)** | ~50 ms | Tied with Python QReader on image accuracy |
-| Python QReader | 96/99 (97.0%) | 581/595 (97.6%) | 159 ms | Reference |
+| CoreML + HarderConfig (ZBar→OpenCV) | **98/99 (99.0%)** | **560/595 (94.1%)** | ~50 ms | Exceeds Python QReader on image accuracy |
+| CoreML ALL + ZBar (plain) | 96/99 (97.0%) | 558/595 (93.8%) | ~50 ms | Previous best |
+| Python QReader 3.16 | 97/99 (98.0%) | 582/595 (97.8%) | 205 ms | Reference (corrected from 96/99 — QR3k annotation was wrong) |
 
-**Remaining failures** (3 images, all irreducible):
-- **QR2c**: ZBar-specific regression — passes with OpenCV decoder; decoder trade-off
-- **QR3k**: Japanese URL encoding edge case — also fails Python QReader
-- **QR3q**: Compressed URL, small modules — also fails Python QReader
+**Remaining failure** (1 image, irreducible):
+- **QR3q**: Cylindrical distortion (cup surface) — also fails Python QReader and WeChatQR
+
+**QR2c fix**: ZBar was converting ISO-8859-1 bytes (e.g. `\xE1l` = 'á'+'l') as Shift-JIS
+2-byte sequences to valid-but-wrong UTF-8 Japanese characters (獺). TryHarder always runs the
+OpenCV fallback; OpenCV decodes encoding-ambiguous QR codes correctly. First fallback that
+returns a non-empty result wins.
+
+**QR3k fix**: The original dataset annotation was wrong. The QR code payload is
+`\r\nhttp://www.jrs.co.jp/\r\n` (with CRLF padding) — confirmed by external scanner.
+Added `\r`/`\n` escape support in `parseAnnotations` and corrected the annotation.
+See `testdata/Dataset-QR-2020/annotations.txt` (tracked in git) and the benchmark
+`datasets/README.md` errata section.
+
+**WeChatQR verdict**: tested against QR3k and QR3q — no improvement. Cylindrical distortion
+(QR3q) is fundamentally non-affine. WeChatQR stays behind `-tags wechat` as an opt-in experiment only.
 
 **Phase 2 fallback set** (tried only when Phase 1 exhausts all options):
 `gray_otsu_blur5`, `high_contrast` (CLAHE), `gray_blur5`, `gray_blur7`, `sharpen_gray`, `sharpen_gray_otsu`
 
-**Benchmark command**: always run with `QREADER_DECODER=zbar QREADER_PROVIDER=coreml` for
-accurate results. The OpenCV decoder gives ~91/99 and is not representative of the ZBar pipeline.
+**Benchmark commands**:
+- `QREADER_DECODER=harder QREADER_PROVIDER=coreml` for HarderConfig results
+- `QREADER_DECODER=zbar QREADER_PROVIDER=coreml` for plain ZBar baseline
 
 ### Key Findings
 
