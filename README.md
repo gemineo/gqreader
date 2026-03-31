@@ -70,20 +70,20 @@ suite. Python was measured under similar but not identical conditions.
 
 | Configuration | ms/img | vs. Python QReader | Notes |
 |--------------|--------|--------------------|-------|
-| **ZBarConfig + CoreML ALL** | **37** | **4.3× faster** | Recommended on Apple Silicon |
-| ZBarConfig + CPU | 147 | 1.1× faster | Portable, all platforms |
-| DefaultConfig + CoreML ALL | 184 | — | OpenCV decoder, CoreML inference |
-| DefaultConfig + CPU | 282 | 1.8× slower | OpenCV decoder, CPU inference |
-| MinimalConfig (no preproc) | 154 | — | No scaling / perspective (−6pp accuracy) |
+| **DefaultConfig + CoreML ALL** | **~50** | **3.2× faster** | Recommended on Apple Silicon — ZBar+OpenCV fallback |
+| DefaultConfig + CPU | ~136 | 1.2× faster | ZBar+OpenCV fallback, all platforms |
+| FastConfig + CoreML ALL | ~37 | 4.3× faster | ZBar only, no fallback |
+| FastConfig + CPU | ~147 | 1.1× faster | ZBar only, portable |
+| MinimalConfig (no preproc) | 154 | — | No scaling / perspective (−41pp accuracy) |
 | CoreML CPU-only | 210 | — | CoreML graph, CPU execution |
 | CoreML CPUAndGPU | 183 | — | GPU offload, no ANE |
 | **Python QReader** | **159** | baseline | ultralytics + Apple MPS + pyzbar |
 
-**Key insight — ZBar unlocks CoreML's full benefit**: with OpenCV as the decoder, CoreML saves
-98 ms/img (282 → 184 ms). With ZBar as the decoder, CoreML saves 110 ms/img more (147 → 37 ms).
-When OpenCV's multi-scale decode loop is the dominant cost, CoreML's inference speedup is masked.
-Switching to ZBar makes ONNX inference the bottleneck again, so CoreML provides a much larger
-relative gain.
+**Key insight — ZBar unlocks CoreML's full benefit**: with OpenCV as the primary decoder, CoreML
+saves only ~98 ms/img. With ZBar as the primary decoder, CoreML saves ~110 ms/img more because
+ONNX inference becomes the bottleneck again. `DefaultConfig` uses ZBar as primary (fast path) and
+only falls back to OpenCV when ZBar fails — so it gets most of ZBar's speed advantage while
+recovering the few QR codes that ZBar mis-encodes.
 
 ---
 
@@ -134,9 +134,9 @@ gQReader combines three stages:
 brew install opencv onnxruntime zbar
 ```
 
-> `zbar` is optional. If you skip it, use `DefaultConfig()` (OpenCV decoder) instead of
-> `ZBarConfig()`. You will lose ~6 percentage points of accuracy and the decoding step will be
-> 3–5× slower.
+> `zbar` is required for `DefaultConfig()` and `FastConfig()`. If you cannot install it, use
+> `MinimalConfig()` or replace the decoder factory with `qrdecode.NewOpenCVDecoder`. You will
+> lose accuracy and the decoding step will be 3–5× slower.
 
 **Linux (Debian/Ubuntu):**
 
@@ -222,9 +222,9 @@ import (
 )
 
 func main() {
-    // ZBarConfig: recommended — uses libzbar for 3-5× faster decoding
-    // DefaultConfig: portable — uses OpenCV (no libzbar required)
-    qr, err := gqreader.New(gqreader.ZBarConfig())
+    // DefaultConfig: ZBar primary + OpenCV fallback — highest accuracy (recommended)
+    // FastConfig: ZBar only, no fallback — maximum throughput
+    qr, err := gqreader.New(gqreader.DefaultConfig())
     if err != nil {
         log.Fatal(err)
     }
@@ -269,7 +269,7 @@ for i, det := range detections {
 import "github.com/gemineo/gqreader/qrdet"
 
 // Apple Silicon — CoreML (GPU + Neural Engine), best on macOS
-cfg := gqreader.ZBarConfig()
+cfg := gqreader.DefaultConfig()
 cfg.DetectionConfig = qrdet.DefaultConfig().WithProvider(qrdet.CoreMLProviderConfig())
 
 // NVIDIA — CUDA
@@ -345,7 +345,7 @@ task clean-all          # Remove artefacts + models + Python venv
 ```
 gqreader/
 ├── qreader.go              # Main API: QReader, DetectAndDecode*
-├── config.go               # Config, DefaultConfig, ZBarConfig, MinimalConfig
+├── config.go               # Config, DefaultConfig, FastConfig, MinimalConfig
 ├── pipeline.go             # Brute-force decode pipeline
 ├── result.go               # QRResult type
 ├── crop.go                 # BBox and perspective crop helpers
@@ -418,23 +418,22 @@ but is not a general solution. gQReader documents this as a known limitation of 
 
 **Affected image in Dataset-QR-2020**: `QR2c`.
 
-**Workaround**: if your QR codes contain Central or Eastern European Latin-1 text, use
-`DefaultConfig()` (OpenCV decoder) instead of `ZBarConfig()`. The OpenCV decoder handles encoding
-correctly.
+**Workaround**: `DefaultConfig()` (ZBar primary + OpenCV fallback) recovers this automatically —
+the OpenCV fallback decoder handles the encoding correctly whenever ZBar fails or returns an
+unexpected result. Only `FastConfig()` (ZBar only) is affected.
 
 ### Remaining Accuracy Gap
 
-As of 2026-03-30 (ZBar decoder), gQReader scores 95/99 images vs Python QReader's 96/99:
+As of 2026-03-31 (DefaultConfig: ZBar+OpenCV fallback), gQReader scores **98/99** images vs
+Python QReader's 97/99:
 
-| Image | gQReader (ZBar) | Python QReader | Root cause |
-|-------|----------------|----------------|-----------|
-| QR2c | ❌ | ✅ | ZBar ISO-8859-1 encoding bug (see above) |
-| QR3e | ❌ | ❌ | Both fail |
-| QR3k | ❌ | ❌ | Both fail |
-| QR3q | ❌ | ❌ | Both fail |
+| Image | gQReader (DefaultConfig) | Python QReader | Root cause |
+|-------|--------------------------|----------------|-----------|
+| QR3q | ❌ | ❌ | Cylindrical distortion (cup surface) — geometrically irreducible |
 
-Three of the four failing images also fail Python QReader. The only image exclusively failing
-gQReader is `QR2c` (ZBar encoding issue), making the **effective recoverable gap one image**.
+`QR2c` and `QR3k` are now decoded correctly by the fallback chain. `QR3e` was also fixed.
+`QR3q` also fails Python QReader and WeChatQR; the distortion is non-affine and cannot be
+corrected by perspective transforms.
 
 ---
 
@@ -471,7 +470,7 @@ brew reinstall onnxruntime
 export CGO_LDFLAGS="-L/opt/homebrew/opt/onnxruntime/lib"
 ```
 
-### libzbar not found (ZBarConfig build errors)
+### libzbar not found
 
 ```bash
 # macOS
@@ -481,8 +480,9 @@ brew install zbar
 sudo apt-get install libzbar-dev
 ```
 
-If you do not want to install libzbar, replace `ZBarConfig()` with `DefaultConfig()` (OpenCV
-decoder) in your code. You will lose ~6 percentage points of accuracy and decoding will be slower.
+If you cannot install libzbar, use `MinimalConfig()` or build a custom config with the OpenCV
+decoder factory: `gqreader.DefaultConfig().WithDecoderFactory(func() (qrdecode.Decoder, error) { return qrdecode.NewOpenCVDecoder() })`.
+You will lose accuracy and decoding will be 3–5× slower.
 
 ### Python environment issues (model export)
 

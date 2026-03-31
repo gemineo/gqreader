@@ -29,7 +29,7 @@ type Config struct {
 	MaxWorkers int
 
 	// TryHarder enables the fallback decoder chain when the primary decoder
-	// fails all Phase 1+2 preprocessing attempts. Zero overhead when false (default).
+	// fails all Phase 1+2 preprocessing attempts.
 	TryHarder bool
 
 	// FallbackDecoderFactories is an ordered list of decoder factories tried in
@@ -45,26 +45,24 @@ type Config struct {
 	DecoderFactory func() (qrdecode.Decoder, error)
 }
 
-// DefaultConfig returns the default configuration matching Python QReader's full pipeline.
-// Uses OpenCV QRCodeDetector for maximum portability.
-// For better performance, use ZBarConfig() if libzbar is available.
+// DefaultConfig returns the recommended configuration: ZBar primary decoder with
+// OpenCV as the fallback. Achieves 99% image accuracy on Dataset-QR-2020, exceeding
+// Python QReader. Use FastConfig() when throughput matters more than decode accuracy.
+//
+// Requires libzbar (brew install zbar / apt-get install libzbar-dev).
 func DefaultConfig() Config {
-	return Config{
-		DetectionConfig: qrdet.DefaultConfig(),
-		ScaleFactors:    []float64{0.5, 2, 0.25, 3, 4},
-		TryPerspective:  true,
-		MaxWorkers:      0,
-		DecoderFactory:  func() (qrdecode.Decoder, error) { return qrdecode.NewOpenCVDecoder() },
-	}
+	return FastConfig().WithFallbackDecoderFactories(
+		func() (qrdecode.Decoder, error) { return qrdecode.NewOpenCVDecoder() },
+	)
 }
 
-// ZBarConfig returns the default pipeline using libzbar as the QR decoder.
-// ZBar is typically 3-5× faster than OpenCV QRCodeDetector and is the same
-// library used by Python QReader (pyzbar). Requires libzbar:
+// FastConfig returns a speed-optimised configuration: ZBar decoder only, no fallback.
+// Suitable when throughput matters more than decode accuracy on encoding-ambiguous QR codes.
+// Known limitation: ZBar may mis-encode ISO-8859-1 byte sequences (e.g. Latin-1 text);
+// use DefaultConfig() if QR codes may contain non-ASCII Latin characters.
 //
-//	macOS:  brew install zbar
-//	Linux:  apt-get install libzbar-dev
-func ZBarConfig() Config {
+// Requires libzbar (brew install zbar / apt-get install libzbar-dev).
+func FastConfig() Config {
 	return Config{
 		DetectionConfig: qrdet.DefaultConfig(),
 		ScaleFactors:    []float64{0.5, 2, 0.25, 3, 4},
@@ -121,16 +119,6 @@ func (c Config) WithFallbackDecoderFactories(fs ...func() (qrdecode.Decoder, err
 	c.FallbackDecoderFactories = newSlice
 	c.TryHarder = true
 	return c
-}
-
-// HarderConfig returns ZBarConfig with TryHarder enabled and OpenCV as the fallback decoder.
-// ZBar handles ~97% of QR codes (fast path); OpenCV recovers ZBar encoding regressions
-// (e.g. ISO-8859-1 / Latin-1 byte sequences) and Kanji-mode QR codes.
-// Use this when accuracy matters more than throughput.
-func HarderConfig() Config {
-	return ZBarConfig().WithFallbackDecoderFactories(
-		func() (qrdecode.Decoder, error) { return qrdecode.NewOpenCVDecoder() },
-	)
 }
 
 // MinimalConfig returns a fast configuration that skips scaling and perspective correction.

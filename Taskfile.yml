@@ -146,17 +146,17 @@ tasks:
       - QREADER_PROVIDER={{.PROVIDER}} go test -tags integration -bench="^BenchmarkDataset$" -benchmem -benchtime={{.BENCH_TIME}} -run=^$ ./...
 
   # ---------------------------------------------------------------------------
-  # Harder decode / WeChatQR exploration
+  # Fast (no fallback) and WeChatQR exploration
   # ---------------------------------------------------------------------------
 
-  bench-harder:
-    desc: "Benchmark fallback decoder chain: ZBar primary + OpenCV fallback (QREADER_PROVIDER overridable)"
+  bench-fast:
+    desc: "Benchmark fast path: ZBar only, no fallback (QREADER_PROVIDER overridable)"
     deps: [model]
     vars:
       BENCH_TIME: '{{.BENCH_TIME | default "3x"}}'
       PROVIDER: '{{.QREADER_PROVIDER | default "coreml"}}'
     cmds:
-      - QREADER_DECODER=harder QREADER_PROVIDER={{.PROVIDER}} go test -tags integration -bench="^BenchmarkDataset$" -benchmem -benchtime={{.BENCH_TIME}} -run=^$ ./...
+      - QREADER_DECODER=fast QREADER_PROVIDER={{.PROVIDER}} go test -tags integration -bench="^BenchmarkDataset$" -benchmem -benchtime={{.BENCH_TIME}} -run=^$ ./...
 
   wechat-models:
     desc: "Download WeChatQR Caffe model files (~10 MB) into models/wechat/"
@@ -179,13 +179,13 @@ tasks:
       BENCH_TIME: '{{.BENCH_TIME | default "3x"}}'
       PROVIDER: '{{.QREADER_PROVIDER | default "coreml"}}'
     cmds:
-      - QREADER_DECODER=harder QREADER_WECHAT_MODELS=models/wechat QREADER_PROVIDER={{.PROVIDER}} go test -tags "integration wechat" -bench="^BenchmarkDataset$" -benchmem -benchtime={{.BENCH_TIME}} -run=^$ ./...
+      - QREADER_WECHAT_MODELS=models/wechat QREADER_PROVIDER={{.PROVIDER}} go test -tags "integration wechat" -bench="^BenchmarkDataset$" -benchmem -benchtime={{.BENCH_TIME}} -run=^$ ./...
 
-  test-harder:
-    desc: "Run integration tests with harder decode chain against QR2c and QR3k"
+  test-default-accuracy:
+    desc: "Run integration tests with default decode chain (ZBar→OpenCV) against QR2c, QR3k, QR3q"
     deps: [model]
     cmds:
-      - QREADER_DECODER=harder QREADER_PROVIDER=coreml go test -tags integration -run "TestDatasetDecodeAll/QR2c|TestDatasetDecodeAll/QR3k|TestDatasetDecodeAll/QR3q" -v -timeout 60s ./...
+      - QREADER_PROVIDER=coreml go test -tags integration -run "TestDatasetDecodeAll/QR2c|TestDatasetDecodeAll/QR3k|TestDatasetDecodeAll/QR3q" -v -timeout 60s ./...
 
   # ---------------------------------------------------------------------------
   # Development

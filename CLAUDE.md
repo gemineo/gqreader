@@ -6,6 +6,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 QReader_PoC is a Go port of the Python QReader library (https://github.com/Eric-Canas/QReader/). The goal is to eliminate Docker/Python dependencies by converting both QRdet (YOLOv8-based QR code detection) and QReader (image preprocessing) into pure Go with acceptable CGO dependencies.
 
+### Core Value Proposition
+
+**Best-in-class decoding accuracy is the primary selling point of this library.**
+
+The default configuration (`DefaultConfig()`) uses a ZBar→OpenCV fallback chain that achieves
+99% image accuracy on Dataset-QR-2020, exceeding Python QReader (97%). Speed is a secondary
+concern: users who need maximum throughput can opt out via `FastConfig()` (ZBar only, no
+fallback), but the default must never trade accuracy for speed. Any change that improves
+throughput at the cost of accuracy requires an explicit opt-in API.
+
 ### Architecture Components
 
 The project converts two Python libraries into Go:
@@ -323,8 +333,8 @@ See `testdata/Dataset-QR-2020/annotations.txt` (tracked in git) and the benchmar
 `gray_otsu_blur5`, `high_contrast` (CLAHE), `gray_blur5`, `gray_blur7`, `sharpen_gray`, `sharpen_gray_otsu`
 
 **Benchmark commands**:
-- `QREADER_DECODER=harder QREADER_PROVIDER=coreml` for HarderConfig results
-- `QREADER_DECODER=zbar QREADER_PROVIDER=coreml` for plain ZBar baseline
+- `QREADER_PROVIDER=coreml` for DefaultConfig results (ZBar→OpenCV fallback, now the default)
+- `QREADER_DECODER=fast QREADER_PROVIDER=coreml` for FastConfig baseline (ZBar only, no fallback)
 
 ### Key Findings
 

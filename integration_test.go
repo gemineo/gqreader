@@ -52,14 +52,15 @@ func TestMain(m *testing.M) {
 		// their own readers.
 		//
 		// QREADER_DECODER selects the QR decoder:
-		//   "zbar"   – libzbar (faster, same library as Python QReader)
-		//   "opencv" – OpenCV QRCodeDetector (default, no extra deps)
+		//   "fast"    – ZBar only, no fallback (maximum throughput)
+		//   "minimal" – MinimalConfig (no scaling/perspective)
+		//   (default) – ZBar primary + OpenCV fallback (recommended, highest accuracy)
 		var cfg gqreader.Config
 		switch os.Getenv("QREADER_DECODER") {
-		case "zbar":
-			cfg = gqreader.ZBarConfig()
-		case "harder", "chain":
-			cfg = gqreader.HarderConfig()
+		case "fast":
+			cfg = gqreader.FastConfig()
+		case "minimal":
+			cfg = gqreader.MinimalConfig()
 		default:
 			cfg = gqreader.DefaultConfig()
 		}
@@ -347,7 +348,7 @@ func BenchmarkDatasetMinimal(b *testing.B) {
 func BenchmarkDatasetZBar(b *testing.B) {
 	imagePaths := collectImagePaths(b)
 
-	r, err := gqreader.NewFromFile(modelPath, gqreader.ZBarConfig())
+	r, err := gqreader.NewFromFile(modelPath, gqreader.FastConfig())
 	if err != nil {
 		b.Skipf("ZBar decoder unavailable: %v", err)
 	}
@@ -369,7 +370,7 @@ func BenchmarkDatasetZBar(b *testing.B) {
 func BenchmarkDatasetZBarCoreML(b *testing.B) {
 	imagePaths := collectImagePaths(b)
 
-	cfg := gqreader.ZBarConfig()
+	cfg := gqreader.FastConfig()
 	cfg.DetectionConfig = cfg.DetectionConfig.WithProvider(qrdet.CoreMLProviderConfig())
 	r, err := gqreader.NewFromFile(modelPath, cfg)
 	if err != nil {

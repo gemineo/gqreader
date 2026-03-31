@@ -6,49 +6,61 @@ import (
 	"github.com/gemineo/gqreader/qrdecode"
 )
 
-func TestHarderConfig(t *testing.T) {
-	cfg := HarderConfig()
+func TestDefaultConfig_TryHarder(t *testing.T) {
+	cfg := DefaultConfig()
 
 	if !cfg.TryHarder {
-		t.Error("HarderConfig: TryHarder should be true")
+		t.Error("DefaultConfig: TryHarder should be true")
 	}
 	if len(cfg.FallbackDecoderFactories) != 1 {
-		t.Errorf("HarderConfig: FallbackDecoderFactories len = %d, want 1", len(cfg.FallbackDecoderFactories))
+		t.Errorf("DefaultConfig: FallbackDecoderFactories len = %d, want 1", len(cfg.FallbackDecoderFactories))
 	}
 	if cfg.FallbackDecoderFactories[0] == nil {
-		t.Error("HarderConfig: FallbackDecoderFactories[0] should not be nil")
+		t.Error("DefaultConfig: FallbackDecoderFactories[0] should not be nil")
 	}
 	if cfg.DecoderFactory == nil {
-		t.Error("HarderConfig: DecoderFactory should not be nil")
+		t.Error("DefaultConfig: DecoderFactory should not be nil")
 	}
-	// Verify the fallback factory is callable and returns an OpenCV decoder
+	// Verify the fallback factory produces an OpenCV decoder.
 	dec, err := cfg.FallbackDecoderFactories[0]()
 	if err != nil {
-		t.Fatalf("HarderConfig fallback factory error: %v", err)
+		t.Fatalf("DefaultConfig fallback factory error: %v", err)
 	}
 	defer dec.Close()
 	if _, ok := dec.(*qrdecode.OpenCVDecoder); !ok {
-		t.Errorf("HarderConfig fallback decoder type = %T, want *qrdecode.OpenCVDecoder", dec)
+		t.Errorf("DefaultConfig fallback decoder type = %T, want *qrdecode.OpenCVDecoder", dec)
 	}
 }
 
-func TestHarderConfig_ZBarConfigUnchanged(t *testing.T) {
-	// Calling HarderConfig must not mutate ZBarConfig (value semantics check).
-	base := ZBarConfig()
-	_ = HarderConfig()
-	after := ZBarConfig()
+func TestFastConfig_NoFallback(t *testing.T) {
+	cfg := FastConfig()
 
-	if base.TryHarder != after.TryHarder {
-		t.Error("ZBarConfig: TryHarder was mutated by HarderConfig call")
+	if cfg.TryHarder {
+		t.Error("FastConfig: TryHarder should be false")
 	}
-	if len(base.FallbackDecoderFactories) != len(after.FallbackDecoderFactories) {
-		t.Error("ZBarConfig: FallbackDecoderFactories was mutated by HarderConfig call")
+	if len(cfg.FallbackDecoderFactories) != 0 {
+		t.Errorf("FastConfig: FallbackDecoderFactories len = %d, want 0", len(cfg.FallbackDecoderFactories))
+	}
+	if cfg.DecoderFactory == nil {
+		t.Error("FastConfig: DecoderFactory should not be nil")
+	}
+}
+
+func TestMinimalConfig_NoFallback(t *testing.T) {
+	cfg := MinimalConfig()
+
+	if cfg.TryHarder {
+		t.Error("MinimalConfig: TryHarder should be false")
+	}
+	if len(cfg.FallbackDecoderFactories) != 0 {
+		t.Errorf("MinimalConfig: FallbackDecoderFactories len = %d, want 0", len(cfg.FallbackDecoderFactories))
 	}
 }
 
 func TestWithFallbackDecoderFactories_ValueSemantics(t *testing.T) {
+	// FastConfig is used as a no-fallback baseline to verify value semantics.
 	factory := func() (qrdecode.Decoder, error) { return qrdecode.NewOpenCVDecoder() }
-	original := ZBarConfig()
+	original := FastConfig()
 	extended := original.WithFallbackDecoderFactories(factory)
 
 	if original.TryHarder {
@@ -69,22 +81,11 @@ func TestWithFallbackDecoderFactories_Append(t *testing.T) {
 	f1 := func() (qrdecode.Decoder, error) { return qrdecode.NewOpenCVDecoder() }
 	f2 := func() (qrdecode.Decoder, error) { return qrdecode.NewOpenCVDecoder() }
 
-	cfg := ZBarConfig().
+	cfg := FastConfig().
 		WithFallbackDecoderFactories(f1).
 		WithFallbackDecoderFactories(f2)
 
 	if len(cfg.FallbackDecoderFactories) != 2 {
 		t.Errorf("FallbackDecoderFactories len = %d, want 2 after two appends", len(cfg.FallbackDecoderFactories))
-	}
-}
-
-func TestConfig_TryHarderDefaultFalse(t *testing.T) {
-	for _, cfg := range []Config{DefaultConfig(), ZBarConfig(), MinimalConfig()} {
-		if cfg.TryHarder {
-			t.Errorf("config TryHarder should default to false")
-		}
-		if len(cfg.FallbackDecoderFactories) != 0 {
-			t.Errorf("config FallbackDecoderFactories should default to empty")
-		}
 	}
 }

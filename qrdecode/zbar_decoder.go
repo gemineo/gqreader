@@ -63,8 +63,8 @@ import (
 // not principled and does not generalise.
 //
 // Callers that must decode QR codes containing ISO-8859-1 Central or Eastern
-// European characters should use DefaultConfig() (OpenCV decoder) instead of
-// ZBarConfig(). This affects image QR2c in Dataset-QR-2020.
+// European characters should use DefaultConfig() (ZBar+OpenCV fallback) instead
+// of FastConfig() (ZBar only). This affects image QR2c in Dataset-QR-2020.
 type ZBarDecoder struct {
 	scanner *C.zbar_image_scanner_t
 }
