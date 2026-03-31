@@ -124,7 +124,12 @@ func parseAnnotations(path string) (map[string][]string, error) {
 
 		// Split on '|' without deduplication: multiple QR codes in one image
 		// can legitimately encode the same content.
+		// Unescape \r and \n so annotations can represent QR codes whose content
+		// includes literal CR or LF bytes (e.g. QR3k encodes \r\nURL\r\n).
 		parts := strings.Split(rawContents, "|")
+		for i, p := range parts {
+			parts[i] = strings.NewReplacer(`\r`, "\r", `\n`, "\n").Replace(p)
+		}
 		result[stem] = parts
 	}
 
