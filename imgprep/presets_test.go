@@ -97,11 +97,11 @@ func TestQRDecodeStrategies(t *testing.T) {
 func TestQRDecodeFallbackStrategies(t *testing.T) {
 	strategies := QRDecodeFallbackStrategies()
 
-	if len(strategies) != 4 {
-		t.Fatalf("QRDecodeFallbackStrategies() returned %d strategies, want 4", len(strategies))
+	if len(strategies) != 6 {
+		t.Fatalf("QRDecodeFallbackStrategies() returned %d strategies, want 6", len(strategies))
 	}
 
-	expectedNames := []string{"gray_blur5", "gray_blur7", "sharpen_gray", "sharpen_gray_otsu"}
+	expectedNames := []string{"gray_otsu_blur5", "high_contrast", "gray_blur5", "gray_blur7", "sharpen_gray", "sharpen_gray_otsu"}
 	for i, s := range strategies {
 		if s.Name() != expectedNames[i] {
 			t.Errorf("Strategy[%d].Name() = %q, want %q", i, s.Name(), expectedNames[i])

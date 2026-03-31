@@ -276,12 +276,21 @@ func QRDecodeStrategies() []Strategy {
 // QRDecodeFallbackStrategies returns additional preprocessing strategies tried only
 // when QRDecodeStrategies fails to produce a result. They cover less common cases
 // that the primary set does not handle:
-//  1. gray_blur5        — grayscale → GaussianBlur(5), no binarisation
-//  2. gray_blur7        — grayscale → GaussianBlur(7), stronger blur
-//  3. sharpen_gray      — sharpen → grayscale, raw (no binarisation)
-//  4. sharpen_gray_otsu — sharpen → grayscale → Otsu
+//  1. gray_otsu_blur5   — grayscale → Otsu → GaussianBlur(5); recovers images that need
+//                         smoothing after binarisation (previously in the primary set)
+//  2. high_contrast     — grayscale → CLAHE(4.0) → AdaptiveThreshold; targets low-contrast images
+//  3. gray_blur5        — grayscale → GaussianBlur(5), no binarisation
+//  4. gray_blur7        — grayscale → GaussianBlur(7), stronger blur
+//  5. sharpen_gray      — sharpen → grayscale, raw (no binarisation)
+//  6. sharpen_gray_otsu — sharpen → grayscale → Otsu
 func QRDecodeFallbackStrategies() []Strategy {
 	return []Strategy{
+		NewCompositeStrategy("gray_otsu_blur5",
+			&Grayscale{},
+			&OtsuThreshold{},
+			&GaussianBlur{KernelSize: 5},
+		),
+		HighContrastStrategy(),
 		NewCompositeStrategy("gray_blur5",
 			&Grayscale{},
 			&GaussianBlur{KernelSize: 5},
