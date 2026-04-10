@@ -32,6 +32,17 @@ type session struct {
 
 // newSession creates a new ONNX session from model data.
 func newSession(modelData []byte, inputSize int, pc ProviderConfig) (*session, error) {
+	return createSession(modelData, "", inputSize, pc)
+}
+
+// newSessionFromFile creates a new ONNX session from a model file.
+func newSessionFromFile(modelPath string, inputSize int, pc ProviderConfig) (*session, error) {
+	return createSession(nil, modelPath, inputSize, pc)
+}
+
+// createSession creates a new ONNX session from either model data (embedded) or a file path.
+// Exactly one of modelData or modelPath must be provided.
+func createSession(modelData []byte, modelPath string, inputSize int, pc ProviderConfig) (*session, error) {
 	if err := initONNXRuntime(); err != nil {
 		return nil, fmt.Errorf("failed to initialize ONNX Runtime: %w", err)
 	}
@@ -42,23 +53,8 @@ func newSession(modelData []byte, inputSize int, pc ProviderConfig) (*session, e
 	s.output0Shape = ort.Shape{1, modelOutputChannels, modelOutputPredictions}
 	s.output1Shape = ort.Shape{1, modelMaskCoefficients, modelPrototypeSize, modelPrototypeSize}
 
-	var err error
-	s.inputTensor, err = ort.NewTensor(s.inputShape, make([]float32, 1*3*inputSize*inputSize))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create input tensor: %w", err)
-	}
-
-	s.output0, err = ort.NewTensor(s.output0Shape, make([]float32, 1*modelOutputChannels*modelOutputPredictions))
-	if err != nil {
-		s.inputTensor.Destroy()
-		return nil, fmt.Errorf("failed to create output0 tensor: %w", err)
-	}
-
-	s.output1, err = ort.NewTensor(s.output1Shape, make([]float32, 1*modelMaskCoefficients*modelPrototypeSize*modelPrototypeSize))
-	if err != nil {
-		s.inputTensor.Destroy()
-		s.output0.Destroy()
-		return nil, fmt.Errorf("failed to create output1 tensor: %w", err)
+	if err := s.createTensors(); err != nil {
+		return nil, err
 	}
 
 	options, err := buildSessionOptions(pc)
@@ -68,74 +64,62 @@ func newSession(modelData []byte, inputSize int, pc ProviderConfig) (*session, e
 	}
 	defer options.Destroy()
 
-	s.ortSession, err = ort.NewAdvancedSessionWithONNXData(
-		modelData,
-		[]string{"images"},
-		[]string{"output0", "output1"},
-		[]ort.ArbitraryTensor{s.inputTensor},
-		[]ort.ArbitraryTensor{s.output0, s.output1},
-		options,
-	)
-	if err != nil {
-		s.cleanup()
-		return nil, fmt.Errorf("failed to create ONNX session: %w", err)
+	// Create the ORT session from either embedded data or file path
+	if modelData != nil {
+		s.ortSession, err = ort.NewAdvancedSessionWithONNXData(
+			modelData,
+			[]string{"images"},
+			[]string{"output0", "output1"},
+			[]ort.ArbitraryTensor{s.inputTensor},
+			[]ort.ArbitraryTensor{s.output0, s.output1},
+			options,
+		)
+		if err != nil {
+			s.cleanup()
+			return nil, fmt.Errorf("failed to create ONNX session: %w", err)
+		}
+	} else {
+		s.ortSession, err = ort.NewAdvancedSession(
+			modelPath,
+			[]string{"images"},
+			[]string{"output0", "output1"},
+			[]ort.ArbitraryTensor{s.inputTensor},
+			[]ort.ArbitraryTensor{s.output0, s.output1},
+			options,
+		)
+		if err != nil {
+			s.cleanup()
+			return nil, fmt.Errorf("failed to create ONNX session from %s: %w", modelPath, err)
+		}
 	}
 
 	return s, nil
 }
 
-// newSessionFromFile creates a new ONNX session from a model file.
-func newSessionFromFile(modelPath string, inputSize int, pc ProviderConfig) (*session, error) {
-	if err := initONNXRuntime(); err != nil {
-		return nil, fmt.Errorf("failed to initialize ONNX Runtime: %w", err)
-	}
-
-	s := &session{inputSize: inputSize}
-
-	s.inputShape = ort.Shape{1, 3, int64(inputSize), int64(inputSize)}
-	s.output0Shape = ort.Shape{1, modelOutputChannels, modelOutputPredictions}
-	s.output1Shape = ort.Shape{1, modelMaskCoefficients, modelPrototypeSize, modelPrototypeSize}
-
+// createTensors initializes the input and output tensors for the session.
+// On error, any created tensors are cleaned up before returning.
+func (s *session) createTensors() error {
 	var err error
-	s.inputTensor, err = ort.NewTensor(s.inputShape, make([]float32, 1*3*inputSize*inputSize))
+
+	s.inputTensor, err = ort.NewTensor(s.inputShape, make([]float32, 1*3*s.inputSize*s.inputSize))
 	if err != nil {
-		return nil, fmt.Errorf("failed to create input tensor: %w", err)
+		return fmt.Errorf("failed to create input tensor: %w", err)
 	}
 
 	s.output0, err = ort.NewTensor(s.output0Shape, make([]float32, 1*modelOutputChannels*modelOutputPredictions))
 	if err != nil {
 		s.inputTensor.Destroy()
-		return nil, fmt.Errorf("failed to create output0 tensor: %w", err)
+		return fmt.Errorf("failed to create output0 tensor: %w", err)
 	}
 
 	s.output1, err = ort.NewTensor(s.output1Shape, make([]float32, 1*modelMaskCoefficients*modelPrototypeSize*modelPrototypeSize))
 	if err != nil {
 		s.inputTensor.Destroy()
 		s.output0.Destroy()
-		return nil, fmt.Errorf("failed to create output1 tensor: %w", err)
+		return fmt.Errorf("failed to create output1 tensor: %w", err)
 	}
 
-	options, err := buildSessionOptions(pc)
-	if err != nil {
-		s.cleanup()
-		return nil, err
-	}
-	defer options.Destroy()
-
-	s.ortSession, err = ort.NewAdvancedSession(
-		modelPath,
-		[]string{"images"},
-		[]string{"output0", "output1"},
-		[]ort.ArbitraryTensor{s.inputTensor},
-		[]ort.ArbitraryTensor{s.output0, s.output1},
-		options,
-	)
-	if err != nil {
-		s.cleanup()
-		return nil, fmt.Errorf("failed to create ONNX session from %s: %w", modelPath, err)
-	}
-
-	return s, nil
+	return nil
 }
 
 // buildSessionOptions constructs ORT SessionOptions from a ProviderConfig.
