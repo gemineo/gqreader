@@ -304,36 +304,41 @@ QR2c and QR3c are the two images where the preprocessing pipeline diverges.
 
 ## Current Best Results (2026-11-06, feat/structured-decoder)
 
-After Phase 3 (structured decoding, package `qrstruct`) and the geometry-aware dedupe:
-
 | Configuration | Images pass% | QR codes % | Notes |
 |--------------|-------------|-----------|-------|
-| CoreML + DefaultConfig (ZBar→OpenCV→structured) | **99/99 (100%)** | **568/595 (95.5%)** | QR3q + one QR6a code decoded by Phase 3 |
-| CoreML + DefaultConfig without Phase 3 | 98/99 (99.0%) | 566/595 (95.1%) | dedupe fix only |
+| CoreML + DefaultConfig (tiling + ZBar→OpenCV→structured) | **99/99 (100%)** | **595/595 (100%)** | median 160 ms, mean 384 ms, p95 1.9 s |
+| Same without tiled detection | 99/99 (100%) | 568/595 (95.5%) | |
+| Same without Phase 3 and tiling | 98/99 (99.0%) | 566/595 (95.1%) | dedupe fix only |
 | Python QReader 3.16 | 97/99 (98.0%) | 582/595 (97.8%) | Reference |
+| QR3ader (Rust rewrite, same day) | 99/99 (100%) | 593/595 (99.7%) | ported the same methods |
 
-**QR3q resolution**: every off-the-shelf decoder (ZBar, OpenCV standard/curved/aruco, zxing-cpp,
-rqrr, rxing, WeChat) locates the symbol but samples it through a grid that is 1-3 px off at
-~4 px/module, which exceeds the Reed-Solomon budget. Phase 3 fits the sampling grid itself
-(homography, optionally a tilted-axis cylinder) by maximising agreement on the ~40 % of modules
-whose value is known a priori (finders, timing, alignment, format BCH), then reads the bits and
-runs its own Reed-Solomon with erasures. It only runs on detections that Phase 1, Phase 2 and the
-decoder fallback chain all failed on, so it cannot regress passing images. Pure Go, no CGO.
-Python prototype and experiments: see the memory note `project_structured_decoder`.
+What closed the gap, in order of effect:
 
-**Dedupe fix**: `deduplicateResults` merged every decoded result with the same content, which
-dropped real codes on sheets of identical labels (QR1e: 5 codes, QR2b, QR2u). Results are now
-merged only when their bboxes overlap (IoU > 0.3, the NMS threshold).
+1. **Tiled detection** (`qrdet/tiling.go`, +25 codes): images larger than `TileSize` (1280 px)
+   also go through overlapping tiles; tile detections cut by an inner tile edge are dropped,
+   the rest are merged with the full-image pass (IoU > NMS threshold or 70 % containment).
+   `qrdet.Config.WithTiling(0, 0)` disables it.
+2. **Phase 3 structured decoding** (`qrstruct`, +4 codes, +1 image): own grid fit on the
+   a-priori-known modules + own Reed-Solomon. See the memory note `project_structured_decoder`.
+   Phase 3 tries the fitted quad and the bbox corners as initialisations: on 70-85 px symbols
+   (≈3 px/module) they land in different basins and either may decode.
+3. **Geometry-aware dedupe** (+6 codes): same payload merged only when bboxes overlap.
+4. **Quad fitting rewrite** (`qrdet/quadrilateral.go`): edges refined as (angle, offset) on a
+   densified outline, with a fallback to the hull quad; 197/577 degenerate quads → 0/603.
+5. **Mask polygon offset fix** (`maskToPolygon`): polygons were shifted by up to one prototype
+   pixel (16 px on a 2592 px image).
 
-**Phase 3 safeguards**: erasures are capped at EC/2 per block and the padding bytes (0xEC/0x11)
-are verified when erasures were used, because an erasure-only RS "decode" at full EC capacity
-always succeeds and yields random bytes (seen on a bbox-initialised fit). The cylinder sweep is
-skipped when the planar fit scores at chance level (normalised known-module score > 0.33), which
-is what detector false positives on text labels look like (6 of the 8 undecoded QR6 detections).
+**Pitfalls met on the way** (all fixed, all tested): erasure-only RS "decodes" at full EC capacity
+are always successful and return random bytes (cap erasures at EC/2, verify 0xEC/0x11 padding);
+the integer known-module score is flat near the optimum (add a small ambiguity term, visit the
+global search from the identity outwards, add whole-quad moves); a lower coarse score does not
+guarantee a decodable grid (carry both global placements to the decode stages); zero-value
+`qrstruct.Options` must enable everything (`SkipMirror`/`SkipSurface`, not `TryX` booleans);
+the cylinder sweep is skipped above a normalised planar score of 0.33 (detector false positives
+on text labels score 0.35-0.40, real symbols ≤ 0.30).
 
-**Remaining gap** (27 QR codes, 0 images): small symbols in the 2592×1920 QR4/QR6 manufacturing
-images, shrunk ~4× by the 640 px letterbox and never detected, plus one damaged QR6b symbol.
-Tiled detection is the next lever.
+**Golden files** (`testdata/golden`, `cmd/goldengen`, CPU provider) are regenerated from this
+state: 603 detections, 595/595 matched.
 
 ## Previous Results (2026-03-31, feat/harder-decode)
 

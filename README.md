@@ -91,18 +91,21 @@ recovering the few QR codes that ZBar mis-encodes.
 
 | Configuration | Images | QR codes |
 |--------------|--------|----------|
-| **gQReader DefaultConfig (ZBar → OpenCV → structured), 2026-11-06** | **99/99 (100%)** | **568/595 (95.5%)** |
+| **gQReader DefaultConfig (tiled detection, ZBar → OpenCV → structured), 2026-11-06** | **99/99 (100%)** | **595/595 (100%)** |
+| gQReader DefaultConfig without tiled detection | 99/99 (100%) | 568/595 (95.5%) |
 | gQReader DefaultConfig without Phase 3 (ZBar → OpenCV), 2026-03-31 | 98/99 (99.0%) | 560/595 (94.1%) |
 | gQReader (ZBar decoder only) | 95/99 (96.0%) | 554/595 (93.1%) |
 | gQReader (OpenCV decoder only) | 89/99 (89.9%) | 531/595 (89.2%) |
 | Python QReader 3.16 | 97/99 (98.0%) | 582/595 (97.8%) |
 | zbar standalone (no YOLO) | 86/99 (86.9%) | 241/595 (40.5%) |
 
-The 2026-11-06 figures add Phase 3 (structured decoding: +1 image, `QR3q`, and +1
-damaged-finder code on `QR6a`) and keep distinct detections that share a payload instead of
-merging them by text (+6 QR codes on `QR1e`, `QR2b`, `QR2u`). The remaining 27 undecoded codes
-are small symbols in the 2592×1920 manufacturing images (`QR4`, `QR6`) that the 640 px detector
-input does not resolve, plus one damaged symbol on `QR6b`.
+The 2026-11-06 figures come from four changes: Phase 3 structured decoding (`QR3q`, and the
+damaged-finder codes on `QR6a`, `QR6b`, `QR6f`), tiled detection for images larger than
+1280 px (the 26 small symbols of the 2592×1920 `QR4`/`QR6` sheets that the 640 px letterbox
+could not resolve), a rewritten quadrilateral fit (a third of the dataset quads had corners far
+outside their bbox) and a dedupe that keeps distinct detections sharing a payload (`QR1e`,
+`QR2b`, `QR2u`). Per-image time on Apple M3 Pro with CoreML: median 160 ms, mean 384 ms,
+p95 1.9 s (sheets of 50 labels).
 
 The accuracy is **decoder-independent**: CoreML, CPU, and all other execution providers produce
 identical detections. The provider selection only affects inference speed.
