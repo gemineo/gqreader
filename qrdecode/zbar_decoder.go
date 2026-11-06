@@ -12,9 +12,7 @@ package qrdecode
 //          dnf install zbar-devel        (Fedora/RHEL)
 
 /*
-#cgo darwin CFLAGS:  -I/opt/homebrew/include
-#cgo darwin LDFLAGS: -L/opt/homebrew/lib -lzbar
-#cgo linux  LDFLAGS: -lzbar
+#cgo pkg-config: zbar
 
 #include <zbar.h>
 #include <stdlib.h>
