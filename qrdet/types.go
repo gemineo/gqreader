@@ -97,6 +97,16 @@ type Config struct {
 	// Default: 640
 	InputSize int
 
+	// TileSize enables tiled detection for images larger than this many pixels
+	// on either side: the detector also runs on overlapping TileSize×TileSize
+	// tiles so that small symbols survive the letterbox downscale. 0 disables
+	// tiling. Default: 1280.
+	TileSize int
+
+	// TileOverlap is the fraction of TileSize shared by neighbouring tiles.
+	// Default: 0.2.
+	TileOverlap float32
+
 	// Provider configures the ONNX Runtime execution provider and session options.
 	// Use CPUProviderConfig() or CoreMLProviderConfig() to configure.
 	// The zero value selects CPU with full graph optimization.
@@ -110,6 +120,8 @@ func DefaultConfig() Config {
 		NMSIoUThreshold:     0.3,
 		MaxDetections:       100,
 		InputSize:           640,
+		TileSize:            1280,
+		TileOverlap:         0.2,
 		Provider:            CPUProviderConfig(),
 	}
 }
@@ -117,6 +129,14 @@ func DefaultConfig() Config {
 // WithConfidence returns a copy of the config with the given confidence threshold.
 func (c Config) WithConfidence(threshold float32) Config {
 	c.ConfidenceThreshold = threshold
+	return c
+}
+
+// WithTiling returns a copy of the config with tiled detection configured.
+// A tileSize of 0 disables tiling.
+func (c Config) WithTiling(tileSize int, overlap float32) Config {
+	c.TileSize = tileSize
+	c.TileOverlap = overlap
 	return c
 }
 

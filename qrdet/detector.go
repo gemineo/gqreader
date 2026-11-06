@@ -2,6 +2,8 @@ package qrdet
 
 import (
 	"fmt"
+
+	"gocv.io/x/gocv"
 )
 
 // Detector is the main interface for QR code detection.
@@ -100,48 +102,53 @@ func (d *Detector) Detect(img *ImageSource) ([]Detection, error) {
 	if img == nil {
 		return nil, fmt.Errorf("image source is nil")
 	}
-
-	// Convert ImageSource to internal gocv.Mat
 	mat := img.mat
 	if mat.Empty() {
 		return nil, fmt.Errorf("input image is empty")
 	}
 
-	// Preprocess: letterbox, normalize, convert to CHW
+	detections, err := d.detectMat(mat)
+	if err != nil {
+		return nil, err
+	}
+
+	size := d.config.TileSize
+	if size > 0 && (mat.Cols() > size || mat.Rows() > size) {
+		tiled, err := d.detectTiles(mat)
+		if err != nil {
+			return nil, err
+		}
+		detections = mergeDetections(append(detections, tiled...), d.config.NMSIoUThreshold, tileContainThreshold)
+	}
+	return detections, nil
+}
+
+// tileContainThreshold is the fraction of the smaller box that must lie
+// inside the other for two detections from different passes to be merged.
+const tileContainThreshold = 0.7
+
+// detectMat runs one inference pass on a Mat and returns detections in the
+// Mat's own coordinates.
+func (d *Detector) detectMat(mat gocv.Mat) ([]Detection, error) {
 	inputData, letterboxInfo, err := preprocessImage(mat, d.config.InputSize)
 	if err != nil {
 		return nil, fmt.Errorf("preprocessing failed: %w", err)
 	}
-
-	// Set input tensor
 	if err := d.session.setInput(inputData); err != nil {
 		return nil, fmt.Errorf("failed to set input: %w", err)
 	}
-
-	// Run inference
 	if err := d.session.run(); err != nil {
 		return nil, fmt.Errorf("inference failed: %w", err)
 	}
-
-	// Get outputs
 	output0 := d.session.getOutput0()
 	output1 := d.session.getOutput1()
-
-	// Post-process: parse detections, apply NMS, generate masks
 	detections, err := processOutput(output0, output1, letterboxInfo, d.config)
 	if err != nil {
 		return nil, fmt.Errorf("post-processing failed: %w", err)
 	}
-
 	return detections, nil
 }
 
-// DetectFile loads an image from a file and runs detection.
-// This is a convenience method that handles image loading and resource cleanup.
-//
-// Example:
-//
-//	detections, err := detector.DetectFile("photo.jpg")
 func (d *Detector) DetectFile(imagePath string) ([]Detection, error) {
 	img, err := NewImageFromFile(imagePath)
 	if err != nil {
