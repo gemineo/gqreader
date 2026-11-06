@@ -22,6 +22,11 @@ const (
 	fitterIoUThreshold    = 0.8
 	fitterMaxCombinations = 300
 	fitterNMMaxIter       = 200
+
+	// fitterSamplingSeed seeds the combination subsampling in findInitialQuad.
+	// A fixed seed keeps detections reproducible across runs (required for
+	// golden-file comparisons) while preserving the random-subset strategy.
+	fitterSamplingSeed = 0x5152646574 // "QRdet"
 )
 
 // fitQuadrilateral fits a quadrilateral to a polygon using IoU-optimized search,
@@ -94,8 +99,9 @@ func findInitialQuad(simplified, hull [][2]float64, hullArea float64) [4][2]floa
 	}
 
 	if len(combos) > fitterMaxCombinations {
+		rng := rand.New(rand.NewPCG(fitterSamplingSeed, uint64(len(combos))))
 		for i := len(combos) - 1; i > 0; i-- {
-			j := rand.IntN(i + 1)
+			j := rng.IntN(i + 1)
 			combos[i], combos[j] = combos[j], combos[i]
 		}
 		combos = combos[:fitterMaxCombinations]
