@@ -129,6 +129,7 @@ func (q *QReader) decodeAll(img gocv.Mat, detections []qrdet.Detection) []QRResu
 			if q.config.TryHarder {
 				results[i] = q.retryWithFallbacks(img, det, results[i])
 			}
+			results[i] = q.retryStructured(img, det, results[i])
 		}
 		return deduplicateResults(results)
 	}
@@ -162,7 +163,7 @@ func (q *QReader) decodeAll(img gocv.Mat, detections []qrdet.Detection) []QRResu
 			if q.config.TryHarder {
 				result = q.retryWithFallbacks(img, d, result)
 			}
-			results[idx] = result
+			results[idx] = q.retryStructured(img, d, result)
 		}(i, det)
 	}
 
@@ -192,6 +193,18 @@ func (q *QReader) retryWithFallbacks(img gocv.Mat, det qrdet.Detection, primary 
 		}
 	}
 	return primary
+}
+
+// retryStructured runs Phase 3 (structured decoding) on a detection that is
+// still undecoded after every image-based strategy, when enabled.
+func (q *QReader) retryStructured(img gocv.Mat, det qrdet.Detection, current QRResult) QRResult {
+	if current.Decoded || !q.config.TryStructured {
+		return current
+	}
+	if r, ok := structuredDecode(img, det, q.config.StructuredOptions); ok {
+		return r
+	}
+	return current
 }
 
 // duplicateIoU is the bounding-box overlap above which two decoded results

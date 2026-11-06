@@ -3,6 +3,7 @@ package gqreader
 import (
 	"github.com/gemineo/gqreader/qrdecode"
 	"github.com/gemineo/gqreader/qrdet"
+	"github.com/gemineo/gqreader/qrstruct"
 )
 
 // Config holds configuration for the QReader pipeline.
@@ -43,17 +44,29 @@ type Config struct {
 	// concurrent-safe, but must be safe for sequential reuse within a single goroutine.
 	// Default: OpenCV QRCodeDetector.
 	DecoderFactory func() (qrdecode.Decoder, error)
+
+	// TryStructured enables Phase 3: when every decoder and preprocessing
+	// strategy has failed on a detection, a sampling grid is fitted to the
+	// detection and the module matrix is decoded directly (package qrstruct).
+	// This recovers low-resolution and curved symbols (cups, bottles) and
+	// only runs on detections that would otherwise be reported undecoded.
+	TryStructured bool
+
+	// StructuredOptions tunes Phase 3. The zero value selects
+	// qrstruct.DefaultOptions().
+	StructuredOptions qrstruct.Options
 }
 
 // DefaultConfig returns the recommended configuration: ZBar primary decoder with
-// OpenCV as the fallback. Achieves 99% image accuracy on Dataset-QR-2020, exceeding
-// Python QReader. Use FastConfig() when throughput matters more than decode accuracy.
+// OpenCV as the fallback, then the structured decoder as a last resort.
+// Achieves 100% image accuracy on Dataset-QR-2020, exceeding Python QReader.
+// Use FastConfig() when throughput matters more than decode accuracy.
 //
 // Requires libzbar (brew install zbar / apt-get install libzbar-dev).
 func DefaultConfig() Config {
 	return FastConfig().WithFallbackDecoderFactories(
 		func() (qrdecode.Decoder, error) { return qrdecode.NewOpenCVDecoder() },
-	)
+	).WithStructured(true)
 }
 
 // FastConfig returns a speed-optimised configuration: ZBar decoder only, no fallback.
@@ -118,6 +131,21 @@ func (c Config) WithFallbackDecoderFactories(fs ...func() (qrdecode.Decoder, err
 	copy(newSlice[len(c.FallbackDecoderFactories):], fs)
 	c.FallbackDecoderFactories = newSlice
 	c.TryHarder = true
+	return c
+}
+
+// WithStructured returns a copy of the config with Phase 3 (structured decoding)
+// enabled or disabled.
+func (c Config) WithStructured(v bool) Config {
+	c.TryStructured = v
+	return c
+}
+
+// WithStructuredOptions returns a copy of the config with Phase 3 enabled and
+// tuned by the given options.
+func (c Config) WithStructuredOptions(opts qrstruct.Options) Config {
+	c.TryStructured = true
+	c.StructuredOptions = opts
 	return c
 }
 

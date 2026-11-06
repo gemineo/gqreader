@@ -52,15 +52,19 @@ func TestMain(m *testing.M) {
 		// their own readers.
 		//
 		// QREADER_DECODER selects the QR decoder:
-		//   "fast"    – ZBar only, no fallback (maximum throughput)
-		//   "minimal" – MinimalConfig (no scaling/perspective)
-		//   (default) – ZBar primary + OpenCV fallback (recommended, highest accuracy)
+		//   "fast"          – ZBar only, no fallback (maximum throughput)
+		//   "minimal"       – MinimalConfig (no scaling/perspective)
+		//   "no-structured" – DefaultConfig without Phase 3 (structured decoding)
+		//   (default)       – ZBar primary + OpenCV fallback + structured decoder
+		//                     (recommended, highest accuracy)
 		var cfg gqreader.Config
 		switch os.Getenv("QREADER_DECODER") {
 		case "fast":
 			cfg = gqreader.FastConfig()
 		case "minimal":
 			cfg = gqreader.MinimalConfig()
+		case "no-structured":
+			cfg = gqreader.DefaultConfig().WithStructured(false)
 		default:
 			cfg = gqreader.DefaultConfig()
 		}

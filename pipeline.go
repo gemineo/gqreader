@@ -23,6 +23,10 @@ import (
 //
 //	Phase 2 — fallback strategies (only when Phase 1 yields nothing):
 //	  For each crop × scale factor: try each fallback flavor
+//
+// When both phases fail for every decoder in the fallback chain, the caller
+// runs Phase 3 (structuredDecode): a sampling grid is fitted to the detection
+// and the module matrix is decoded directly, see package qrstruct.
 func decodeDetection(
 	img gocv.Mat,
 	det qrdet.Detection,
