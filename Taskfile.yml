@@ -1,5 +1,12 @@
 version: "3"
 
+# GoCV requires OpenCV 4 (pkg-config "opencv4"). Homebrew now ships OpenCV 5 as
+# the default "opencv" formula, so point pkg-config at the keg-only opencv@4.
+# Falls back to the system pkg-config path on platforms without Homebrew.
+env:
+  PKG_CONFIG_PATH:
+    sh: 'p="$(brew --prefix opencv@4 2>/dev/null)/lib/pkgconfig"; if [ -d "$p" ]; then echo "$p${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"; else echo "${PKG_CONFIG_PATH:-}"; fi'
+
 vars:
   BIN_DIR: bin
   BINARY_NAME: qrdetect
@@ -180,6 +187,12 @@ tasks:
       PROVIDER: '{{.QREADER_PROVIDER | default "coreml"}}'
     cmds:
       - QREADER_WECHAT_MODELS=models/wechat QREADER_PROVIDER={{.PROVIDER}} go test -tags "integration wechat" -bench="^BenchmarkDataset$" -benchmem -benchtime={{.BENCH_TIME}} -run=^$ ./...
+
+  golden:
+    desc: "Regenerate golden reference files in testdata/golden (CPU provider, deterministic)"
+    deps: [model]
+    cmds:
+      - go run ./cmd/goldengen -dataset testdata/Dataset-QR-2020 -model {{.MODEL_ONNX}} -out testdata/golden
 
   test-default-accuracy:
     desc: "Run integration tests with default decode chain (ZBar→OpenCV) against QR2c, QR3k, QR3q"

@@ -49,3 +49,6 @@ benchmarks/
 
 # Test datasets (not redistributed — see INTEGRATION_TESTING.md for acquisition)
 testdata/Dataset-QR-2020/
+
+# Taskfile checksum cache
+.task/
