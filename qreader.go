@@ -19,6 +19,10 @@ type QReader struct {
 	detector *qrdet.Detector
 	decoder  qrdecode.Decoder
 	config   Config
+
+	// decoderFactory is config.DecoderFactory with the default applied, so the
+	// parallel path never dereferences a nil factory.
+	decoderFactory func() (qrdecode.Decoder, error)
 }
 
 // New creates a QReader using the embedded ONNX model.
@@ -55,9 +59,10 @@ func newQReader(detector *qrdet.Detector, config Config) (*QReader, error) {
 	}
 
 	return &QReader{
-		detector: detector,
-		decoder:  decoder,
-		config:   config,
+		detector:       detector,
+		decoder:        decoder,
+		config:         config,
+		decoderFactory: factory,
 	}, nil
 }
 
@@ -146,7 +151,7 @@ func (q *QReader) decodeAll(img gocv.Mat, detections []qrdet.Detection) []QRResu
 			defer func() { <-semaphore }()
 
 			// Each goroutine uses its own decoder for thread safety
-			dec, err := q.config.DecoderFactory()
+			dec, err := q.decoderFactory()
 			if err != nil {
 				results[idx] = QRResult{Detection: d}
 				return
