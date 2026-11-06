@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-11-06T20:23:36Z",
+  "git_commit": "c329fc2478c719bfd0656c2cdf563e24c3103c2d",
+  "versions": {
+    "go": "go1.27.3",
+    "gocv": "0.42.0",
+    "onnxruntime": "1.31.1",
+    "opencv": "4.14.0",
+    "zbar": "0.23.95"
+  },
+  "model": {
+    "file": "qrdet-s.onnx",
+    "sha256": "04efadd15aeb8be3684085c6084b4176ba8290e1e19886d61df4d565d91a5107",
+    "source": "https://github.com/Eric-Canas/qrdet/releases/download/v2.0_release/qrdet-s.pt (exported to ONNX)"
+  },
+  "config": {
+    "confidence_threshold": 0.5,
+    "input_size": 640,
+    "max_detections": 100,
+    "name": "DefaultConfig (ZBar primary, OpenCV fallback)",
+    "nms_iou_threshold": 0.3,
+    "provider": "cpu",
+    "scale_factors": [
+      0.5,
+      2,
+      0.25,
+      3,
+      4
+    ],
+    "try_perspective": true
+  },
+  "images": 99,
+  "images_passed": 98,
+  "qr_expected": 595,
+  "qr_matched": 560,
+  "failed_images": [
+    "QR3q"
+  ],
+  "threshold_rule": "1-5 expected: \u003e=1 matched; 6+ expected: \u003e=ceil(30%)"
+}
