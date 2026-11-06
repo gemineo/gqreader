@@ -23,13 +23,13 @@ type Options struct {
 	// many pixels given the quad size (default 2).
 	MinModulePx float64
 
-	// TryMirror also reads each fitted grid through its diagonal, which
-	// decodes mirrored symbols (default true).
-	TryMirror bool
+	// SkipMirror disables reading each fitted grid through its diagonal
+	// (mirrored symbols). The zero value keeps the mirror attempt.
+	SkipMirror bool
 
-	// TrySurface enables the cylinder stage when the planar fit fails
-	// (default true).
-	TrySurface bool
+	// SkipSurface disables the cylinder stage that runs when the planar fit
+	// fails. The zero value keeps the cylinder stage.
+	SkipSurface bool
 
 	// MaxCandidates is the number of best-ranked hypotheses refined and
 	// decoded with a planar grid (default 3).
@@ -50,8 +50,6 @@ func DefaultOptions() Options {
 		MinVersion:           1,
 		MaxVersion:           10,
 		MinModulePx:          2,
-		TryMirror:            true,
-		TrySurface:           true,
 		MaxCandidates:        3,
 		MaxSurfaceCandidates: 4,
 		Workers:              runtime.NumCPU(),
@@ -150,13 +148,13 @@ func Decode(img *image.Gray, quad Quad, opts Options) (*Result, error) {
 		ev := newEvaluator(img, h.version, 3)
 		for _, q0 := range h.quads {
 			q, score := ev.descent(q0, Surface{}, fineSteps, planarLambda)
-			if r, ok := ev.decodeBoth(q, Surface{}, opts.TryMirror); ok {
+			if r, ok := ev.decodeBoth(q, Surface{}, !opts.SkipMirror); ok {
 				r.fill(h, score, "homography")
 				return r, nil
 			}
 		}
 	}
-	if !opts.TrySurface {
+	if opts.SkipSurface {
 		return nil, ErrNoDecode
 	}
 
@@ -296,7 +294,7 @@ func surfaceStage(img *image.Gray, h hypothesis, start Quad, opts Options) (*Res
 			break
 		}
 		q, s := ev.descent(tr.quad, tr.surf, fineSteps[1:], surfaceLambda)
-		if r, ok := ev.decodeBoth(q, tr.surf, opts.TryMirror); ok {
+		if r, ok := ev.decodeBoth(q, tr.surf, !opts.SkipMirror); ok {
 			r.fill(h, s, "cylinder")
 			return r, true
 		}

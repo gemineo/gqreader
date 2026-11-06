@@ -71,8 +71,11 @@ func TestDecodeRejectsGarbage(t *testing.T) {
 func TestOptionsNormalise(t *testing.T) {
 	o := Options{}.normalise()
 	d := DefaultOptions()
-	if o.MinVersion != d.MinVersion || o.MaxVersion != d.MaxVersion || o.MaxCandidates != d.MaxCandidates || o.Workers != d.Workers {
+	if o != d {
 		t.Errorf("zero Options normalised to %+v, want defaults %+v", o, d)
+	}
+	if o.SkipMirror || o.SkipSurface {
+		t.Error("zero Options must keep the mirror attempt and the cylinder stage enabled")
 	}
 	o = Options{MinVersion: 5, MaxVersion: 2}.normalise()
 	if o.MaxVersion < o.MinVersion {
