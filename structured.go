@@ -39,37 +39,57 @@ func structuredDecode(img gocv.Mat, det qrdet.Detection, opts qrstruct.Options) 
 		return result, false
 	}
 
-	quad := saneQuad(det)
-	var q qrstruct.Quad
-	for i := range quad {
-		q[i] = qrstruct.Point{X: float64(quad[i][0]) - float64(x1), Y: float64(quad[i][1]) - float64(y1)}
+	// Try the fitted quad first (bbox corners first when the quad is
+	// degenerate), then the other one: on symbols a few pixels wide the two
+	// initialisations land in different basins and either may be the one
+	// that decodes.
+	quad, sane := saneQuad(det)
+	inits := [][4][2]float32{quad}
+	if box := bboxCorners(det); box != quad {
+		if sane {
+			inits = append(inits, box)
+		} else {
+			inits = append([][4][2]float32{box}, inits...)
+		}
 	}
-
-	r, err := qrstruct.Decode(gray, q, opts)
-	if err != nil {
-		return result, false
+	for _, init := range inits {
+		var q qrstruct.Quad
+		for i := range init {
+			q[i] = qrstruct.Point{X: float64(init[i][0]) - float64(x1), Y: float64(init[i][1]) - float64(y1)}
+		}
+		r, err := qrstruct.Decode(gray, q, opts)
+		if err != nil {
+			continue
+		}
+		result.Content = r.Content
+		result.Decoded = true
+		result.Strategy = "structured/" + r.Stage
+		return result, true
 	}
-	result.Content = r.Content
-	result.Decoded = true
-	result.Strategy = "structured/" + r.Stage
-	return result, true
+	return result, false
 }
 
-// saneQuad returns the detection quad, or the bbox corners when a quad corner
-// lies unreasonably far outside the bbox (a degenerate quadrilateral fit).
-func saneQuad(det qrdet.Detection) [4][2]float32 {
+// saneQuad returns the detection quad and whether all its corners lie within
+// half a box side of the bbox; a degenerate quadrilateral fit fails that test.
+func saneQuad(det qrdet.Detection) ([4][2]float32, bool) {
 	quad := det.Quad()
 	bbox := det.BBox()
 	w := bbox[2] - bbox[0]
 	h := bbox[3] - bbox[1]
 	for _, p := range quad {
 		if p[0] < bbox[0]-0.5*w || p[0] > bbox[2]+0.5*w || p[1] < bbox[1]-0.5*h || p[1] > bbox[3]+0.5*h {
-			return [4][2]float32{
-				{bbox[0], bbox[1]}, {bbox[2], bbox[1]}, {bbox[2], bbox[3]}, {bbox[0], bbox[3]},
-			}
+			return quad, false
 		}
 	}
-	return quad
+	return quad, true
+}
+
+// bboxCorners returns the axis-aligned bbox as a TL, TR, BR, BL quad.
+func bboxCorners(det qrdet.Detection) [4][2]float32 {
+	bbox := det.BBox()
+	return [4][2]float32{
+		{bbox[0], bbox[1]}, {bbox[2], bbox[1]}, {bbox[2], bbox[3]}, {bbox[0], bbox[3]},
+	}
 }
 
 // grayRegion copies a rectangular region of img into a grayscale Go image.
