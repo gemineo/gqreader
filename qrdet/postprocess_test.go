@@ -344,7 +344,7 @@ func TestMaskToPolygon_EmptyMask(t *testing.T) {
 	defer emptyMask.Close()
 
 	// Empty mask → fallback to bbox rectangle
-	result := maskToPolygon(emptyMask, 320, 240, 100, 100, 640)
+	result := maskToPolygon(emptyMask, 320, 240, 100, 100, 67, 47, 640)
 	if len(result) != 4 {
 		t.Fatalf("maskToPolygon(empty) length = %d, want 4 (bbox fallback)", len(result))
 	}
@@ -368,7 +368,7 @@ func TestMaskToPolygon_ValidMask(t *testing.T) {
 		}
 	}
 
-	result := maskToPolygon(mask, 320, 240, 100, 100, 640)
+	result := maskToPolygon(mask, 320, 240, 100, 100, 67, 47, 640)
 	if len(result) < 3 {
 		t.Errorf("maskToPolygon(valid) length = %d, want >= 3", len(result))
 	}
@@ -393,7 +393,7 @@ func TestGenerateMask(t *testing.T) {
 		coeffs[i] = 0.5
 	}
 
-	mask := generateMask(coeffs, protos, 320, 320, 100, 100, 640)
+	mask, _, _ := generateMask(coeffs, protos, 320, 320, 100, 100, 640)
 	defer mask.Close()
 
 	if mask.Empty() {
@@ -406,7 +406,7 @@ func TestGenerateMask_ZeroArea(t *testing.T) {
 	coeffs := make([]float32, 32)
 
 	// Zero-width bbox → should return empty mask
-	mask := generateMask(coeffs, protos, 320, 320, 0, 0, 640)
+	mask, _, _ := generateMask(coeffs, protos, 320, 320, 0, 0, 640)
 	defer mask.Close()
 
 	if !mask.Empty() {
@@ -433,7 +433,7 @@ func BenchmarkGenerateMask(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		mask := generateMask(coeffs[:], protos, cx, cy, w, h, modelInputSize)
+		mask, _, _ := generateMask(coeffs[:], protos, cx, cy, w, h, modelInputSize)
 		mask.Close()
 	}
 }
@@ -456,7 +456,7 @@ func BenchmarkGenerateMask_Large(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		mask := generateMask(coeffs[:], protos, cx, cy, w, h, modelInputSize)
+		mask, _, _ := generateMask(coeffs[:], protos, cx, cy, w, h, modelInputSize)
 		mask.Close()
 	}
 }

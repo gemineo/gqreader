@@ -65,10 +65,10 @@ func processOutput(
 		raw := rawDets[idx]
 
 		// Generate mask from coefficients and prototypes
-		mask := generateMask(raw.maskCoeffs[:], output1, raw.cx, raw.cy, raw.w, raw.h, info.targetSize)
+		mask, cropX, cropY := generateMask(raw.maskCoeffs[:], output1, raw.cx, raw.cy, raw.w, raw.h, info.targetSize)
 
 		// Extract polygon from mask using FindContours
-		polygon := maskToPolygon(mask, raw.cx, raw.cy, raw.w, raw.h, info.targetSize)
+		polygon := maskToPolygon(mask, raw.cx, raw.cy, raw.w, raw.h, cropX, cropY, info.targetSize)
 		mask.Close()
 
 		// Transform coordinates to original image space
@@ -163,7 +163,7 @@ func generateMask(
 	prototypes []float32,
 	cx, cy, w, h float32,
 	inputSize int,
-) gocv.Mat {
+) (mask gocv.Mat, cropX, cropY int) {
 	protoSize := modelPrototypeSize // 160
 
 	scale := float32(protoSize) / float32(inputSize)
@@ -174,7 +174,7 @@ func generateMask(
 	y2 := int(clamp32f((cy+h/2)*scale, 0, float32(protoSize-1)))
 
 	if x2 <= x1 || y2 <= y1 {
-		return gocv.NewMat()
+		return gocv.NewMat(), x1, y1
 	}
 
 	maskWidth := x2 - x1
@@ -207,7 +207,7 @@ func generateMask(
 	}
 
 	// Threshold: sigmoid(x) > 0.5 ↔ x > 0, so we skip the sigmoid entirely.
-	mask := gocv.NewMatWithSize(maskHeight, maskWidth, gocv.MatTypeCV8UC1)
+	mask = gocv.NewMatWithSize(maskHeight, maskWidth, gocv.MatTypeCV8UC1)
 	maskPtr, _ := mask.DataPtrUint8()
 	for i, v := range pixelSums {
 		if v > 0 {
@@ -215,7 +215,7 @@ func generateMask(
 		}
 	}
 
-	return mask
+	return mask, x1, y1
 }
 
 // maskToPolygon extracts contour points from a binary mask using OpenCV's FindContours.
@@ -229,9 +229,13 @@ func generateMask(
 // tilt in the QR boundary that the coarse 4-pixel grid would otherwise flatten.
 //
 // Returns points in model input space (640×640).
+//
+// cropX and cropY are the integer prototype-space coordinates at which the
+// mask was cropped; they, not the float bbox corner, locate mask pixel (0,0).
 func maskToPolygon(
 	mask gocv.Mat,
 	cx, cy, w, h float32,
+	cropX, cropY int,
 	inputSize int,
 ) [][2]float32 {
 	bboxFallback := func() [][2]float32 {
@@ -250,9 +254,6 @@ func maskToPolygon(
 	}
 
 	protoSize := modelPrototypeSize
-	scale := float32(protoSize) / float32(inputSize)
-	offsetX := (cx - w/2) * scale
-	offsetY := (cy - h/2) * scale
 	invScale := float32(inputSize) / float32(protoSize)
 
 	// Upsample the prototype-resolution crop to model-input resolution before contour
@@ -303,11 +304,13 @@ func maskToPolygon(
 		return bboxFallback()
 	}
 
-	// After upsampling by invScale, contour point p is already in model-input space
-	// relative to the top-left of the bbox. Adding the bbox top-left (offsetX*invScale)
-	// gives absolute model-space coordinates.
-	modelOffsetX := offsetX * invScale // = cx - w/2
-	modelOffsetY := offsetY * invScale // = cy - h/2
+	// After upsampling by invScale, contour point p is in model-input space
+	// relative to mask pixel (0,0), which sits at the integer prototype crop
+	// origin. Using the float bbox corner here instead would shift the polygon
+	// by up to one prototype pixel (4 model pixels), and in the wrong direction
+	// when the bbox was clamped at the image border.
+	modelOffsetX := float32(cropX) * invScale
+	modelOffsetY := float32(cropY) * invScale
 
 	n := approx.Size()
 	points := make([][2]float32, n)
