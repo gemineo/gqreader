@@ -310,9 +310,12 @@ func (e *evaluator) decode(q Quad, surf Surface) (*Result, error) {
 	if err != nil {
 		return nil, err
 	}
-	payload, eci, err := parseSegments(data, l.Version)
+	payload, eci, endBit, err := parseSegments(data, l.Version)
 	if err != nil {
 		return nil, fmt.Errorf("parsing segments: %w", err)
+	}
+	if nerase > 0 && !validPadding(data, endBit) {
+		return nil, errors.New("erasure decode rejected: padding bytes do not match")
 	}
 	return &Result{
 		Content:  payloadToString(payload, eci),
@@ -349,7 +352,10 @@ func correctBlocks(cw []byte, rel []float32, blocks []Block, index [][]int) ([]b
 		if rel != nil {
 			sort.SliceStable(order, func(i, j int) bool { return rel[src[order[i]]] < rel[src[order[j]]] })
 		}
-		fracs := []float64{0, 0.25, 0.5, 0.75, 1}
+		// Erasures are capped at half the EC codewords so that at least half
+		// of the redundancy remains to validate the correction: with EC
+		// erasures the decoder would always "succeed" by interpolation.
+		fracs := []float64{0, 0.25, 0.5}
 		if rel == nil {
 			fracs = fracs[:1]
 		}
@@ -392,7 +398,7 @@ func DecodeMatrix(bits []uint8, version int) (*Result, error) {
 	if err != nil {
 		return nil, err
 	}
-	payload, eci, err := parseSegments(data, version)
+	payload, eci, _, err := parseSegments(data, version)
 	if err != nil {
 		return nil, err
 	}

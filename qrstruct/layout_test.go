@@ -140,7 +140,7 @@ func TestParseSegments(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			data := bitsToBytes(tc.bits)
-			payload, eci, err := parseSegments(data, tc.version)
+			payload, eci, _, err := parseSegments(data, tc.version)
 			if tc.wantErr {
 				if err == nil {
 					t.Fatalf("expected error, got payload %q", payload)
@@ -152,6 +152,28 @@ func TestParseSegments(t *testing.T) {
 			}
 			if got := payloadToString(payload, eci); got != tc.want {
 				t.Errorf("payload = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestValidPadding(t *testing.T) {
+	tests := []struct {
+		name   string
+		bits   string
+		endBit int
+		want   bool
+	}{
+		{"terminator then EC 11 EC", "0100" + "00000001" + "01100001" + "0000" + "11101100" + "00010001" + "11101100", 24, true},
+		{"zero fill to byte boundary then pads", "0010" + "000000010" + "00111001110" + "0000" + "0000" + "11101100", 28, true},
+		{"wrong pad byte", "0100" + "00000001" + "01100001" + "0000" + "00010001", 24, false},
+		{"non-zero fill bits", "0010" + "000000010" + "00111001110" + "0000" + "0001" + "11101100", 28, false},
+		{"no padding at all", "0100" + "00000001" + "01100001" + "0000", 24, true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := validPadding(bitsToBytes(tc.bits), tc.endBit); got != tc.want {
+				t.Errorf("validPadding = %v, want %v", got, tc.want)
 			}
 		})
 	}

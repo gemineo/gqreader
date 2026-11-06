@@ -77,9 +77,10 @@ func charCountBits(mode, version int) int {
 var errUnsupportedMode = errors.New("unsupported segment mode")
 
 // parseSegments decodes the data codewords into the payload bytes. It returns
-// the bytes, the last ECI designator seen (0 if none) and an error when the
-// stream is malformed.
-func parseSegments(data []byte, version int) ([]byte, int, error) {
+// the bytes, the last ECI designator seen (0 if none), the bit position just
+// after the terminator (or after the last segment when no terminator fits)
+// and an error when the stream is malformed.
+func parseSegments(data []byte, version int) ([]byte, int, int, error) {
 	br := &bitReader{data: data}
 	var out []byte
 	eci := 0
@@ -92,12 +93,12 @@ func parseSegments(data []byte, version int) ([]byte, int, error) {
 		case modeNumeric:
 			cnt, ok := br.read(charCountBits(mode, version))
 			if !ok {
-				return nil, eci, errors.New("truncated numeric count")
+				return nil, eci, br.pos, errors.New("truncated numeric count")
 			}
 			for cnt >= 3 {
 				v, ok := br.read(10)
 				if !ok || v > 999 {
-					return nil, eci, errors.New("bad numeric triple")
+					return nil, eci, br.pos, errors.New("bad numeric triple")
 				}
 				out = append(out, byte('0'+v/100), byte('0'+(v/10)%10), byte('0'+v%10))
 				cnt -= 3
@@ -105,25 +106,25 @@ func parseSegments(data []byte, version int) ([]byte, int, error) {
 			if cnt == 2 {
 				v, ok := br.read(7)
 				if !ok || v > 99 {
-					return nil, eci, errors.New("bad numeric pair")
+					return nil, eci, br.pos, errors.New("bad numeric pair")
 				}
 				out = append(out, byte('0'+v/10), byte('0'+v%10))
 			} else if cnt == 1 {
 				v, ok := br.read(4)
 				if !ok || v > 9 {
-					return nil, eci, errors.New("bad numeric digit")
+					return nil, eci, br.pos, errors.New("bad numeric digit")
 				}
 				out = append(out, byte('0'+v))
 			}
 		case modeAlphanumeric:
 			cnt, ok := br.read(charCountBits(mode, version))
 			if !ok {
-				return nil, eci, errors.New("truncated alphanumeric count")
+				return nil, eci, br.pos, errors.New("truncated alphanumeric count")
 			}
 			for cnt >= 2 {
 				v, ok := br.read(11)
 				if !ok || v >= 45*45 {
-					return nil, eci, errors.New("bad alphanumeric pair")
+					return nil, eci, br.pos, errors.New("bad alphanumeric pair")
 				}
 				out = append(out, alphanumericChars[v/45], alphanumericChars[v%45])
 				cnt -= 2
@@ -131,14 +132,14 @@ func parseSegments(data []byte, version int) ([]byte, int, error) {
 			if cnt == 1 {
 				v, ok := br.read(6)
 				if !ok || v >= 45 {
-					return nil, eci, errors.New("bad alphanumeric char")
+					return nil, eci, br.pos, errors.New("bad alphanumeric char")
 				}
 				out = append(out, alphanumericChars[v])
 			}
 		case modeByte:
 			cnt, ok := br.read(charCountBits(mode, version))
 			if !ok || cnt*8 > br.remaining() {
-				return nil, eci, errors.New("truncated byte segment")
+				return nil, eci, br.pos, errors.New("truncated byte segment")
 			}
 			for i := 0; i < cnt; i++ {
 				v, _ := br.read(8)
@@ -147,7 +148,7 @@ func parseSegments(data []byte, version int) ([]byte, int, error) {
 		case modeECI:
 			first, ok := br.read(8)
 			if !ok {
-				return nil, eci, errors.New("truncated ECI")
+				return nil, eci, br.pos, errors.New("truncated ECI")
 			}
 			switch {
 			case first&0x80 == 0:
@@ -155,36 +156,64 @@ func parseSegments(data []byte, version int) ([]byte, int, error) {
 			case first&0xc0 == 0x80:
 				second, ok := br.read(8)
 				if !ok {
-					return nil, eci, errors.New("truncated ECI")
+					return nil, eci, br.pos, errors.New("truncated ECI")
 				}
 				eci = (first&0x3f)<<8 | second
 			default:
 				rest, ok := br.read(16)
 				if !ok {
-					return nil, eci, errors.New("truncated ECI")
+					return nil, eci, br.pos, errors.New("truncated ECI")
 				}
 				eci = (first&0x1f)<<16 | rest
 			}
 		case modeStructuredAppend:
 			if _, ok := br.read(16); !ok {
-				return nil, eci, errors.New("truncated structured append header")
+				return nil, eci, br.pos, errors.New("truncated structured append header")
 			}
 		case modeFNC1First:
 			// No payload; GS1 framing is left to the caller.
 		case modeFNC1Second:
 			if _, ok := br.read(8); !ok {
-				return nil, eci, errors.New("truncated FNC1 indicator")
+				return nil, eci, br.pos, errors.New("truncated FNC1 indicator")
 			}
 		case modeKanji:
-			return nil, eci, fmt.Errorf("%w: kanji", errUnsupportedMode)
+			return nil, eci, br.pos, fmt.Errorf("%w: kanji", errUnsupportedMode)
 		default:
-			return nil, eci, fmt.Errorf("%w: mode %d", errUnsupportedMode, mode)
+			return nil, eci, br.pos, fmt.Errorf("%w: mode %d", errUnsupportedMode, mode)
 		}
 	}
 	if len(out) == 0 {
-		return nil, eci, errors.New("empty payload")
+		return nil, eci, br.pos, errors.New("empty payload")
 	}
-	return out, eci, nil
+	return out, eci, br.pos, nil
+}
+
+// validPadding reports whether the bits after the terminator follow the
+// standard filler: zero bits up to the next byte boundary, then the bytes
+// 0xEC and 0x11 alternating to the end of the data codewords. A successful
+// erasure-heavy Reed-Solomon decode of a misread symbol produces random data
+// that almost never satisfies this, so the check guards against false
+// positives.
+func validPadding(data []byte, endBit int) bool {
+	if endBit > len(data)*8 {
+		return false
+	}
+	for b := endBit; b%8 != 0 && b < len(data)*8; b++ {
+		if (data[b>>3]>>uint(7-(b&7)))&1 != 0 {
+			return false
+		}
+	}
+	first := (endBit + 7) / 8
+	for i := first; i < len(data); i++ {
+		want := byte(0xEC)
+		if (i-first)%2 == 1 {
+			want = 0x11
+		}
+		if data[i] != want {
+			return false
+		}
+	}
+	return true
 }
 
 // payloadToString converts the payload bytes to a Go string following the
