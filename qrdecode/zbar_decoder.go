@@ -127,7 +127,10 @@ func (d *ZBarDecoder) Decode(img gocv.Mat) ([]DecodedQR, error) {
 		sym := C.zbar_image_first_symbol(zimg)
 		for sym != nil {
 			if C.zbar_symbol_get_type(sym) == C.ZBAR_QRCODE {
-				content := C.GoString(C.zbar_symbol_get_data(sym))
+				// Use the explicit length: payloads may contain NUL bytes,
+				// which C.GoString would truncate at.
+				n := C.zbar_symbol_get_data_length(sym)
+				content := string(C.GoBytes(unsafe.Pointer(C.zbar_symbol_get_data(sym)), C.int(n)))
 				if content != "" {
 					results = append(results, DecodedQR{Content: content})
 				}
