@@ -116,12 +116,13 @@ func sideLength(q Quad) float64 {
 }
 
 // globalSearch slides and scales the quad as a whole and returns the best
-// placement. Shifts span ±5 % of the side length in 1.25 % steps. Candidates
-// are visited from the identity outwards so that, on equal scores, the
-// placement closest to the input quad wins.
+// placement. Shifts span ±5 % of the side length, and at least ±6 px so that
+// small symbols tolerate the same absolute detector error as large ones, on a
+// 9×9 grid. Candidates are visited from the identity outwards so that, on
+// equal scores, the placement closest to the input quad wins.
 func (e *evaluator) globalSearch(q Quad, lambda float64) (Quad, float64) {
 	side := sideLength(q)
-	step := math.Max(0.5, side*0.0125)
+	step := math.Max(6.0, side*0.05) / 4
 	c := q.centre()
 	best := math.Inf(1)
 	bestQ := q

@@ -155,9 +155,11 @@ func Decode(img *image.Gray, quad Quad, opts Options) (*Result, error) {
 		return nil, ErrNoDecode
 	}
 
-	// Cylinder stage.
+	// Cylinder stage. Hypotheses whose planar fit disagrees with the known
+	// modules at chance level are not worth bending: that is what a detector
+	// false positive (text, logo) looks like, and the sweep is the costly part.
 	for i, h := range cands {
-		if i >= opts.MaxSurfaceCandidates {
+		if i >= opts.MaxSurfaceCandidates || h.norm > maxSurfaceNorm {
 			break
 		}
 		if r, ok := surfaceStage(img, h, opts); ok {
@@ -166,6 +168,12 @@ func Decode(img *image.Gray, quad Quad, opts Options) (*Result, error) {
 	}
 	return nil, ErrNoDecode
 }
+
+// maxSurfaceNorm is the normalised planar score above which the cylinder
+// stage is skipped. Decodable symbols score below 0.3 after the planar fit
+// (QR3q: 0.15, strongly bent bottles: 0.27-0.29); regions without a QR code
+// score 0.35-0.40.
+const maxSurfaceNorm = 0.33
 
 func (r *Result) fill(h hypothesis, score float64, stage string) {
 	r.Version = h.version
