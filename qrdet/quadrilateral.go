@@ -67,14 +67,23 @@ func fitQuadrilateral(polygon [][2]float32) (fitted, expanded [4][2]float32) {
 	lines := finetuneLines(initialQuad, poly64)
 
 	fittedF64 := linesToQuad(lines)
-	fittedF64 = orderClockwiseF64(fittedF64)
-	fitted = f64QuadToF32(fittedF64)
+	expandedF64 := linesToQuad(expandLines(lines, hull64))
+	if !quadIsSane(fittedF64, hull64) || !quadIsSane(expandedF64, hull64) {
+		// The refined lines intersect far from the symbol; keep the initial
+		// quad, whose corners are hull vertices, and expand that instead.
+		for i := 0; i < 4; i++ {
+			j := (i + 1) % 4
+			lines[i] = lineFromPoints(initialQuad[i][0], initialQuad[i][1], initialQuad[j][0], initialQuad[j][1])
+		}
+		fittedF64 = initialQuad
+		expandedF64 = linesToQuad(expandLines(lines, hull64))
+		if !quadIsSane(expandedF64, hull64) {
+			expandedF64 = initialQuad
+		}
+	}
 
-	expandedLines := expandLines(lines, hull64)
-	expandedF64 := linesToQuad(expandedLines)
-	expandedF64 = orderClockwiseF64(expandedF64)
-	expanded = f64QuadToF32(expandedF64)
-
+	fitted = f64QuadToF32(orderClockwiseF64(fittedF64))
+	expanded = f64QuadToF32(orderClockwiseF64(expandedF64))
 	return fitted, expanded
 }
 
@@ -124,65 +133,133 @@ func findInitialQuad(simplified, hull [][2]float64, hullArea float64) [4][2]floa
 	return bestQuad
 }
 
-// finetuneLines fits lines to the polygon points grouped by nearest quad edge.
-// Each line is refined via Nelder-Mead minimization of the sum of absolute
-// perpendicular distances, matching Python's scipy.optimize.minimize approach.
+// finetuneLines fits one line per edge of the initial quad to the outline of
+// the polygon.
+//
+// The outline is first densified to about one point per pixel so that every
+// edge is supported by many points regardless of how the contour was
+// simplified, then each point is assigned to the nearest initial edge (points
+// far from every edge are ignored). Each line is refined in normal form
+// (angle, offset) by a coordinate search on the sum of absolute distances.
+// Fitting the angle and offset directly, rather than raw (A, B, C)
+// coefficients under a scale-invariant objective, keeps the search well
+// conditioned: near-parallel neighbouring lines, whose intersections run away
+// to infinity, cannot arise from the optimiser drifting.
 func finetuneLines(initialQuad [4][2]float64, polygon [][2]float64) [4]lineEq {
 	var initial [4]lineEq
+	side := 0.0
 	for i := 0; i < 4; i++ {
 		j := (i + 1) % 4
 		initial[i] = lineFromPoints(
 			initialQuad[i][0], initialQuad[i][1],
 			initialQuad[j][0], initialQuad[j][1],
 		)
+		side += distF64(initialQuad[i], initialQuad[j]) / 4
 	}
 
-	// Assign each polygon point to its nearest line
-	assignments := make([]int, len(polygon))
-	for pi, pt := range polygon {
-		minDist := math.MaxFloat64
+	dense := densifyOutline(polygon, 1.0)
+	maxDist := math.Max(2.0, 0.15*side)
+
+	var groups [4][][2]float64
+	for _, pt := range dense {
+		best, bestDist := -1, maxDist
 		for li := 0; li < 4; li++ {
-			d := initial[li].distance(pt[0], pt[1])
-			if d < minDist {
-				minDist = d
-				assignments[pi] = li
+			if d := initial[li].distance(pt[0], pt[1]); d < bestDist {
+				best, bestDist = li, d
 			}
+		}
+		if best >= 0 {
+			groups[best] = append(groups[best], pt)
 		}
 	}
 
 	var fitted [4]lineEq
 	for li := 0; li < 4; li++ {
-		var pts [][2]float64
-		for pi, ai := range assignments {
-			if ai == li {
-				pts = append(pts, polygon[pi])
-			}
-		}
-
+		pts := groups[li]
 		if len(pts) < 2 {
 			fitted[li] = initial[li]
 			continue
 		}
-
-		// Objective: sum(|Ax+By+C|) / sqrt(A²+B²)  — matches Python's perpendicular_distance
-		objective := func(p [3]float64) float64 {
-			norm := math.Sqrt(p[0]*p[0] + p[1]*p[1])
-			if norm < 1e-12 {
-				return math.MaxFloat64
-			}
-			sum := 0.0
-			for _, pt := range pts {
-				sum += math.Abs(p[0]*pt[0] + p[1]*pt[1] + p[2])
-			}
-			return sum / norm
-		}
-
-		x0 := [3]float64{initial[li].A, initial[li].B, initial[li].C}
-		result := nelderMead3(objective, x0, fitterNMMaxIter)
-		fitted[li] = lineEq{A: result[0], B: result[1], C: result[2]}
+		fitted[li] = fitLineNormalForm(initial[li], pts)
 	}
-
 	return fitted
+}
+
+// densifyOutline returns the closed polygon with extra points inserted along
+// every edge so that consecutive points are at most spacing apart.
+func densifyOutline(polygon [][2]float64, spacing float64) [][2]float64 {
+	n := len(polygon)
+	out := make([][2]float64, 0, 4*n)
+	for i := 0; i < n; i++ {
+		a := polygon[i]
+		b := polygon[(i+1)%n]
+		out = append(out, a)
+		steps := int(distF64(a, b) / spacing)
+		for k := 1; k < steps; k++ {
+			t := float64(k) / float64(steps)
+			out = append(out, [2]float64{a[0] + (b[0]-a[0])*t, a[1] + (b[1]-a[1])*t})
+		}
+	}
+	return out
+}
+
+// fitLineNormalForm refines a line as x·cosθ + y·sinθ = ρ, minimising the sum
+// of absolute point distances with a coordinate search whose steps start at
+// 0.05 rad and 1 px and halve down to 0.002 rad and 0.05 px.
+func fitLineNormalForm(init lineEq, pts [][2]float64) lineEq {
+	norm := init.norm()
+	if norm < 1e-12 {
+		return init
+	}
+	theta := math.Atan2(init.B/norm, init.A/norm)
+	rho := -init.C / norm
+	cost := func(th, r float64) float64 {
+		c, s := math.Cos(th), math.Sin(th)
+		sum := 0.0
+		for _, p := range pts {
+			sum += math.Abs(p[0]*c + p[1]*s - r)
+		}
+		return sum
+	}
+	best := cost(theta, rho)
+	dTheta, dRho := 0.05, 1.0
+	for dTheta >= 0.002 || dRho >= 0.05 {
+		improved := true
+		for improved {
+			improved = false
+			for _, cand := range [][2]float64{{theta + dTheta, rho}, {theta - dTheta, rho}, {theta, rho + dRho}, {theta, rho - dRho}} {
+				if c := cost(cand[0], cand[1]); c < best {
+					best, theta, rho, improved = c, cand[0], cand[1], true
+				}
+			}
+		}
+		dTheta /= 2
+		dRho /= 2
+	}
+	return lineEq{A: math.Cos(theta), B: math.Sin(theta), C: -rho}
+}
+
+// quadIsSane reports whether a quad produced from line intersections stays
+// within reach of the polygon it was fitted to: finite corners, no corner
+// farther than half the hull extent outside the hull's bounding box.
+func quadIsSane(quad [4][2]float64, hull [][2]float64) bool {
+	minX, minY := math.Inf(1), math.Inf(1)
+	maxX, maxY := math.Inf(-1), math.Inf(-1)
+	for _, p := range hull {
+		minX, maxX = math.Min(minX, p[0]), math.Max(maxX, p[0])
+		minY, maxY = math.Min(minY, p[1]), math.Max(maxY, p[1])
+	}
+	slackX := 0.5 * math.Max(maxX-minX, 1)
+	slackY := 0.5 * math.Max(maxY-minY, 1)
+	for _, p := range quad {
+		if math.IsNaN(p[0]) || math.IsNaN(p[1]) || math.IsInf(p[0], 0) || math.IsInf(p[1], 0) {
+			return false
+		}
+		if p[0] < minX-slackX || p[0] > maxX+slackX || p[1] < minY-slackY || p[1] > maxY+slackY {
+			return false
+		}
+	}
+	return true
 }
 
 // expandLines moves each fitted line outward to contain all convex hull points.
