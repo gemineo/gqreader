@@ -115,17 +115,22 @@ func sideLength(q Quad) float64 {
 	return s / 4
 }
 
-// globalSearch slides and scales the quad as a whole and returns the best
-// placement. Shifts span ±5 % of the side length, and at least ±6 px so that
-// small symbols tolerate the same absolute detector error as large ones, on a
-// 9×9 grid. Candidates are visited from the identity outwards so that, on
-// equal scores, the placement closest to the input quad wins.
-func (e *evaluator) globalSearch(q Quad, lambda float64) (Quad, float64) {
+// globalSearch slides and scales the quad as a whole. Shifts span ±5 % of
+// the side length, and at least ±6 px so that small symbols tolerate the same
+// absolute detector error as large ones, on a 9×9 grid. Candidates are
+// visited from the identity outwards so that, on equal scores, the placement
+// closest to the input quad wins.
+//
+// It returns the best placement overall and the best placement within the
+// inner half of the window. The two can sit in different basins of the
+// objective, and a descent from the far one is not always the better one, so
+// callers descend from both.
+func (e *evaluator) globalSearch(q Quad, lambda float64) (wide, near Quad) {
 	side := sideLength(q)
 	step := math.Max(6.0, side*0.05) / 4
 	c := q.centre()
-	best := math.Inf(1)
-	bestQ := q
+	bestWide, bestNear := math.Inf(1), math.Inf(1)
+	wide, near = q, q
 	for _, scale := range []float64{1.0, 0.94, 1.06} {
 		var base Quad
 		for i, p := range q {
@@ -137,12 +142,15 @@ func (e *evaluator) globalSearch(q Quad, lambda float64) (Quad, float64) {
 				cand[i] = Point{p.X + float64(sh[0])*step, p.Y + float64(sh[1])*step}
 			}
 			s := e.objective(cand, Surface{}, lambda)
-			if s < best {
-				best, bestQ = s, cand
+			if s < bestWide {
+				bestWide, wide = s, cand
+			}
+			if abs(sh[0]) <= 2 && abs(sh[1]) <= 2 && s < bestNear {
+				bestNear, near = s, cand
 			}
 		}
 	}
-	return bestQ, best
+	return wide, near
 }
 
 // globalShifts lists the (dx, dy) grid of the global search ordered by

@@ -230,8 +230,13 @@ func identify(img *image.Gray, quad Quad, side float64, opts Options) []hypothes
 	parallelFor(len(hyps), opts.Workers, func(i int) {
 		h := &hyps[i]
 		ev := newEvaluator(img, h.version, 1)
-		q, _ := ev.globalSearch(h.quad, planarLambda)
-		q, s := ev.descent(q, Surface{}, coarseSteps, planarLambda)
+		wide, near := ev.globalSearch(h.quad, planarLambda)
+		q, s := ev.descent(wide, Surface{}, coarseSteps, planarLambda)
+		if near != wide {
+			if q2, s2 := ev.descent(near, Surface{}, coarseSteps, planarLambda); s2 < s {
+				q, s = q2, s2
+			}
+		}
 		h.quad, h.score, h.norm = q, s, ev.normalised(s)
 	})
 	sort.SliceStable(hyps, func(i, j int) bool { return hyps[i].norm < hyps[j].norm })
