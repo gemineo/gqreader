@@ -116,9 +116,12 @@ type Result struct {
 type hypothesis struct {
 	version  int
 	rotation int
-	quad     Quad
-	score    float64
-	norm     float64
+	// quads holds one or two coarse placements (best first). The global
+	// search can land in two basins, and the one with the lower coarse score
+	// is not always the one that decodes, so both are carried to the end.
+	quads []Quad
+	score float64
+	norm  float64
 }
 
 // Decode fits a sampling grid inside quad and decodes the symbol. The quad
@@ -145,10 +148,12 @@ func Decode(img *image.Gray, quad Quad, opts Options) (*Result, error) {
 			break
 		}
 		ev := newEvaluator(img, h.version, 3)
-		q, score := ev.descent(h.quad, Surface{}, fineSteps, planarLambda)
-		if r, ok := ev.decodeBoth(q, Surface{}, opts.TryMirror); ok {
-			r.fill(h, score, "homography")
-			return r, nil
+		for _, q0 := range h.quads {
+			q, score := ev.descent(q0, Surface{}, fineSteps, planarLambda)
+			if r, ok := ev.decodeBoth(q, Surface{}, opts.TryMirror); ok {
+				r.fill(h, score, "homography")
+				return r, nil
+			}
 		}
 	}
 	if !opts.TrySurface {
@@ -162,8 +167,10 @@ func Decode(img *image.Gray, quad Quad, opts Options) (*Result, error) {
 		if i >= opts.MaxSurfaceCandidates || h.norm > maxSurfaceNorm {
 			break
 		}
-		if r, ok := surfaceStage(img, h, opts); ok {
-			return r, nil
+		for _, q0 := range h.quads {
+			if r, ok := surfaceStage(img, h, q0, opts); ok {
+				return r, nil
+			}
 		}
 	}
 	return nil, ErrNoDecode
@@ -221,7 +228,7 @@ func identify(img *image.Gray, quad Quad, side float64, opts Options) []hypothes
 			break
 		}
 		for rot := 0; rot < 4; rot++ {
-			hyps = append(hyps, hypothesis{version: v, rotation: rot, quad: quad.rotate(rot)})
+			hyps = append(hyps, hypothesis{version: v, rotation: rot, quads: []Quad{quad.rotate(rot)}})
 		}
 	}
 	if len(hyps) == 0 {
@@ -230,14 +237,21 @@ func identify(img *image.Gray, quad Quad, side float64, opts Options) []hypothes
 	parallelFor(len(hyps), opts.Workers, func(i int) {
 		h := &hyps[i]
 		ev := newEvaluator(img, h.version, 1)
-		wide, near := ev.globalSearch(h.quad, planarLambda)
+		wide, near := ev.globalSearch(h.quads[0], planarLambda)
 		q, s := ev.descent(wide, Surface{}, coarseSteps, planarLambda)
+		h.quads = []Quad{q}
 		if near != wide {
-			if q2, s2 := ev.descent(near, Surface{}, coarseSteps, planarLambda); s2 < s {
-				q, s = q2, s2
+			q2, s2 := ev.descent(near, Surface{}, coarseSteps, planarLambda)
+			if q2 != q {
+				if s2 < s {
+					h.quads = []Quad{q2, q}
+					s = s2
+				} else {
+					h.quads = append(h.quads, q2)
+				}
 			}
 		}
-		h.quad, h.score, h.norm = q, s, ev.normalised(s)
+		h.score, h.norm = s, ev.normalised(s)
 	})
 	sort.SliceStable(hyps, func(i, j int) bool { return hyps[i].norm < hyps[j].norm })
 	return hyps
@@ -252,10 +266,10 @@ var (
 	surfaceRefine    = 6
 )
 
-// surfaceStage sweeps the cylinder parameters for one hypothesis: a cheap
-// single-sample descent ranks every parameter set, then the best few are
-// refined with full sampling and decoded.
-func surfaceStage(img *image.Gray, h hypothesis, opts Options) (*Result, bool) {
+// surfaceStage sweeps the cylinder parameters for one hypothesis placement:
+// a cheap single-sample descent ranks every parameter set, then the best few
+// are refined with full sampling and decoded.
+func surfaceStage(img *image.Gray, h hypothesis, start Quad, opts Options) (*Result, bool) {
 	type trial struct {
 		surf  Surface
 		quad  Quad
@@ -271,7 +285,7 @@ func surfaceStage(img *image.Gray, h hypothesis, opts Options) (*Result, bool) {
 	}
 	parallelFor(len(trials), opts.Workers, func(i int) {
 		ev := newEvaluator(img, h.version, 1)
-		q, s := ev.descent(h.quad, trials[i].surf, fineSteps[:2], surfaceLambda)
+		q, s := ev.descent(start, trials[i].surf, fineSteps[:2], surfaceLambda)
 		trials[i].quad, trials[i].score = q, s
 	})
 	sort.SliceStable(trials, func(i, j int) bool { return trials[i].score < trials[j].score })
