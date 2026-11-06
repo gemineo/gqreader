@@ -302,7 +302,33 @@ After ZBar decoder integration, CoreML EP, and generateMask 4.4× optimization:
 Remaining 2.1pp gap (QR2c, QR3c, QR3e, QR3k, QR3q): QR3e/k/q also fail Python;
 QR2c and QR3c are the two images where the preprocessing pipeline diverges.
 
-## Current Best Results (2026-03-31, feat/harder-decode)
+## Current Best Results (2026-11-06, feat/structured-decoder)
+
+After Phase 3 (structured decoding, package `qrstruct`) and the geometry-aware dedupe:
+
+| Configuration | Images pass% | QR codes % | Notes |
+|--------------|-------------|-----------|-------|
+| CoreML + DefaultConfig (ZBar→OpenCV→structured) | **99/99 (100%)** | **567/595 (95.3%)** | QR3q decoded by Phase 3 |
+| CoreML + DefaultConfig without Phase 3 | 98/99 (99.0%) | 566/595 (95.1%) | dedupe fix only |
+| Python QReader 3.16 | 97/99 (98.0%) | 582/595 (97.8%) | Reference |
+
+**QR3q resolution**: every off-the-shelf decoder (ZBar, OpenCV standard/curved/aruco, zxing-cpp,
+rqrr, rxing, WeChat) locates the symbol but samples it through a grid that is 1-3 px off at
+~4 px/module, which exceeds the Reed-Solomon budget. Phase 3 fits the sampling grid itself
+(homography, optionally a tilted-axis cylinder) by maximising agreement on the ~40 % of modules
+whose value is known a priori (finders, timing, alignment, format BCH), then reads the bits and
+runs its own Reed-Solomon with erasures. It only runs on detections that Phase 1, Phase 2 and the
+decoder fallback chain all failed on, so it cannot regress passing images. Pure Go, no CGO.
+Python prototype and experiments: see the memory note `project_structured_decoder`.
+
+**Dedupe fix**: `deduplicateResults` merged every decoded result with the same content, which
+dropped real codes on sheets of identical labels (QR1e: 5 codes, QR2b, QR2u). Results are now
+merged only when their bboxes overlap (IoU > 0.3, the NMS threshold).
+
+**Remaining gap** (28 QR codes, 0 images): small symbols in the 2592×1920 QR4/QR6 manufacturing
+images, shrunk ~4× by the 640 px letterbox; never detected. Tiled detection is the next lever.
+
+## Previous Results (2026-03-31, feat/harder-decode)
 
 After TryHarder fallback chain (ZBar primary → OpenCV fallback):
 

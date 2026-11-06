@@ -91,10 +91,17 @@ recovering the few QR codes that ZBar mis-encodes.
 
 | Configuration | Images | QR codes |
 |--------------|--------|----------|
-| gQReader (ZBar decoder) | 95/99 (96.0%) | 554/595 (93.1%) |
-| gQReader (OpenCV decoder) | 89/99 (89.9%) | 531/595 (89.2%) |
-| Python QReader | 96/99 (97.0%) | 581/595 (97.6%) |
+| **gQReader DefaultConfig (ZBar → OpenCV → structured), 2026-11-06** | **99/99 (100%)** | **567/595 (95.3%)** |
+| gQReader DefaultConfig without Phase 3 (ZBar → OpenCV), 2026-03-31 | 98/99 (99.0%) | 560/595 (94.1%) |
+| gQReader (ZBar decoder only) | 95/99 (96.0%) | 554/595 (93.1%) |
+| gQReader (OpenCV decoder only) | 89/99 (89.9%) | 531/595 (89.2%) |
+| Python QReader 3.16 | 97/99 (98.0%) | 582/595 (97.8%) |
 | zbar standalone (no YOLO) | 86/99 (86.9%) | 241/595 (40.5%) |
+
+The 2026-11-06 figures add Phase 3 (structured decoding, +1 image: `QR3q`) and keep distinct
+detections that share a payload instead of merging them by text (+6 QR codes on `QR1e`,
+`QR2b`, `QR2u`). The remaining 28 undecoded codes are small symbols in the 2592×1920
+manufacturing images (`QR4`, `QR6`) that the 640 px detector input does not resolve.
 
 The accuracy is **decoder-independent**: CoreML, CPU, and all other execution providers produce
 identical detections. The provider selection only affects inference speed.
@@ -346,9 +353,19 @@ task clean-all          # Remove artefacts + models + Python venv
 gqreader/
 ├── qreader.go              # Main API: QReader, DetectAndDecode*
 ├── config.go               # Config, DefaultConfig, FastConfig, MinimalConfig
-├── pipeline.go             # Brute-force decode pipeline
+├── pipeline.go             # Brute-force decode pipeline (Phase 1 + 2)
+├── structured.go           # Phase 3: structured decoding of undecoded detections
 ├── result.go               # QRResult type
 ├── crop.go                 # BBox and perspective crop helpers
+│
+├── qrstruct/               # Structured QR decoder (pure Go, no CGO)
+│   ├── tables.go           # ISO 18004 version / EC block tables
+│   ├── layout.go           # Function modules, format info, data ordering
+│   ├── rs.go               # Reed-Solomon decoder with erasures
+│   ├── grid.go             # Homography + cylinder grid model, sampler, Otsu
+│   ├── fit.go              # Known-module objective, global search, descent
+│   ├── decode.go           # Decode(): identify version/orientation, fit, decode
+│   └── testdata/           # Encoder matrices (v1-40) and warped renders
 │
 ├── qrdet/                  # YOLOv8 detection
 │   ├── detector.go
@@ -422,18 +439,35 @@ but is not a general solution. gQReader documents this as a known limitation of 
 the OpenCV fallback decoder handles the encoding correctly whenever ZBar fails or returns an
 unexpected result. Only `FastConfig()` (ZBar only) is affected.
 
-### Remaining Accuracy Gap
+### Phase 3: Structured Decoding
 
-As of 2026-03-31 (DefaultConfig: ZBar+OpenCV fallback), gQReader scores **98/99** images vs
-Python QReader's 97/99:
+As of 2026-11-06 (DefaultConfig: ZBar → OpenCV → structured decoder), gQReader scores
+**99/99** images vs Python QReader's 97/99. The last image, `QR3q` (a QR code printed on a
+cup, ~4 px per module, cylindrical distortion), fails every off-the-shelf decoder: ZBar,
+OpenCV (standard, curved and ArUco detectors), zxing-cpp, rqrr, rxing and WeChatQR.
 
-| Image | gQReader (DefaultConfig) | Python QReader | Root cause |
-|-------|--------------------------|----------------|-----------|
-| QR3q | ❌ | ❌ | Cylindrical distortion (cup surface) — geometrically irreducible |
+Those decoders *locate* the symbol but sample it through a grid derived from a few anchor
+points (finder and alignment pattern centres). At 4 px per module that grid is 1-3 px off,
+which corrupts more codewords than Reed-Solomon can repair. Phase 3 (`qrstruct`) takes the
+opposite route and never hands an image back to a black-box decoder:
 
-`QR2c` and `QR3k` are now decoded correctly by the fallback chain. `QR3e` was also fixed.
-`QR3q` also fails Python QReader and WeChatQR; the distortion is non-affine and cannot be
-corrected by perspective transforms.
+1. The sampling grid is parametrised (a homography from the module lattice to the image,
+   optionally composed with a tilted-axis cylinder model).
+2. Its parameters are fitted by maximising agreement on the modules whose value is known
+   before decoding: finder patterns, separators, timing, alignment, the dark module, the
+   BCH-protected format information and, for versions 7+, the version information. That is
+   roughly 40 % of a small symbol, so the symbol calibrates its own grid.
+3. Version and orientation are unknown on entry and identified by running the fit for every
+   candidate (versions 1-10 × 4 rotations) and keeping the best-scoring ones.
+4. The module centres are sampled, binarised (Otsu), unmasked, de-interleaved and corrected
+   with Reed-Solomon, erasing progressively more of the least reliable codewords when needed.
+
+Phase 3 only runs on detections that Phase 1, Phase 2 and the decoder fallback chain all
+failed to decode, so it cannot regress an image that already passes. It is pure Go (no CGO)
+and costs 30-80 ms per undecoded detection on Apple M3 Pro. On its own, without any
+preprocessing or ZBar, it decodes 17 of 17 dataset images it was tried on, including the
+bottle and cup images. Disable it with `Config.WithStructured(false)`; `FastConfig()` does
+not enable it.
 
 ---
 
