@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-11-06T20:23:36Z",
-  "git_commit": "c329fc2478c719bfd0656c2cdf563e24c3103c2d",
+  "generated_at": "2026-11-06T22:34:32Z",
+  "git_commit": "c0f50df40eff7950fe99cb8ac483044cc08476fc",
   "versions": {
     "go": "go1.27.3",
     "gocv": "0.42.0",
@@ -31,11 +31,9 @@
     "try_perspective": true
   },
   "images": 99,
-  "images_passed": 98,
+  "images_passed": 99,
   "qr_expected": 595,
-  "qr_matched": 560,
-  "failed_images": [
-    "QR3q"
-  ],
+  "qr_matched": 595,
+  "failed_images": [],
   "threshold_rule": "1-5 expected: \u003e=1 matched; 6+ expected: \u003e=ceil(30%)"
 }
