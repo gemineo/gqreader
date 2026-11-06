@@ -308,7 +308,7 @@ After Phase 3 (structured decoding, package `qrstruct`) and the geometry-aware d
 
 | Configuration | Images pass% | QR codes % | Notes |
 |--------------|-------------|-----------|-------|
-| CoreML + DefaultConfig (ZBar→OpenCV→structured) | **99/99 (100%)** | **567/595 (95.3%)** | QR3q decoded by Phase 3 |
+| CoreML + DefaultConfig (ZBar→OpenCV→structured) | **99/99 (100%)** | **568/595 (95.5%)** | QR3q + one QR6a code decoded by Phase 3 |
 | CoreML + DefaultConfig without Phase 3 | 98/99 (99.0%) | 566/595 (95.1%) | dedupe fix only |
 | Python QReader 3.16 | 97/99 (98.0%) | 582/595 (97.8%) | Reference |
 
@@ -325,8 +325,15 @@ Python prototype and experiments: see the memory note `project_structured_decode
 dropped real codes on sheets of identical labels (QR1e: 5 codes, QR2b, QR2u). Results are now
 merged only when their bboxes overlap (IoU > 0.3, the NMS threshold).
 
-**Remaining gap** (28 QR codes, 0 images): small symbols in the 2592×1920 QR4/QR6 manufacturing
-images, shrunk ~4× by the 640 px letterbox; never detected. Tiled detection is the next lever.
+**Phase 3 safeguards**: erasures are capped at EC/2 per block and the padding bytes (0xEC/0x11)
+are verified when erasures were used, because an erasure-only RS "decode" at full EC capacity
+always succeeds and yields random bytes (seen on a bbox-initialised fit). The cylinder sweep is
+skipped when the planar fit scores at chance level (normalised known-module score > 0.33), which
+is what detector false positives on text labels look like (6 of the 8 undecoded QR6 detections).
+
+**Remaining gap** (27 QR codes, 0 images): small symbols in the 2592×1920 QR4/QR6 manufacturing
+images, shrunk ~4× by the 640 px letterbox and never detected, plus one damaged QR6b symbol.
+Tiled detection is the next lever.
 
 ## Previous Results (2026-03-31, feat/harder-decode)
 
