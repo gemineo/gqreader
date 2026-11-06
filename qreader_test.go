@@ -278,54 +278,62 @@ func TestCropPerspective_ZeroQuad(t *testing.T) {
 }
 
 func TestDeduplicateResults(t *testing.T) {
+	// Two boxes at the same place (duplicate detections) and one elsewhere.
+	boxA := [4]float32{0, 0, 100, 100}
+	boxA2 := [4]float32{5, 5, 105, 105}
+	boxB := [4]float32{300, 300, 400, 400}
+	det := func(conf float32, box [4]float32) qrdet.Detection {
+		return qrdet.Detection{Confidence: conf, BBoxXYXY: box}
+	}
+
 	tests := []struct {
 		name    string
 		results []QRResult
 		want    int
 	}{
+		{"empty", nil, 0},
+		{"single", []QRResult{{Content: "a", Decoded: true, Detection: det(0.9, boxA)}}, 1},
 		{
-			"empty",
-			nil,
-			0,
-		},
-		{
-			"single",
-			[]QRResult{{Content: "a", Decoded: true, Detection: qrdet.Detection{Confidence: 0.9}}},
-			1,
-		},
-		{
-			"duplicate content keeps highest confidence",
+			"same content, overlapping boxes: merged",
 			[]QRResult{
-				{Content: "a", Decoded: true, Detection: qrdet.Detection{Confidence: 0.7}},
-				{Content: "a", Decoded: true, Detection: qrdet.Detection{Confidence: 0.9}},
+				{Content: "a", Decoded: true, Detection: det(0.7, boxA)},
+				{Content: "a", Decoded: true, Detection: det(0.9, boxA2)},
 			},
 			1,
 		},
 		{
+			"same content, distinct boxes: both kept",
+			[]QRResult{
+				{Content: "a", Decoded: true, Detection: det(0.7, boxA)},
+				{Content: "a", Decoded: true, Detection: det(0.9, boxB)},
+			},
+			2,
+		},
+		{
 			"different content kept",
 			[]QRResult{
-				{Content: "a", Decoded: true, Detection: qrdet.Detection{Confidence: 0.8}},
-				{Content: "b", Decoded: true, Detection: qrdet.Detection{Confidence: 0.7}},
+				{Content: "a", Decoded: true, Detection: det(0.8, boxA)},
+				{Content: "b", Decoded: true, Detection: det(0.7, boxA2)},
 			},
 			2,
 		},
 		{
 			"undecoded always kept",
 			[]QRResult{
-				{Decoded: false, Detection: qrdet.Detection{Confidence: 0.5}},
-				{Decoded: false, Detection: qrdet.Detection{Confidence: 0.3}},
+				{Decoded: false, Detection: det(0.5, boxA)},
+				{Decoded: false, Detection: det(0.3, boxA2)},
 			},
 			2,
 		},
 		{
 			"mix decoded and undecoded",
 			[]QRResult{
-				{Content: "a", Decoded: true, Detection: qrdet.Detection{Confidence: 0.8}},
-				{Decoded: false, Detection: qrdet.Detection{Confidence: 0.5}},
-				{Content: "a", Decoded: true, Detection: qrdet.Detection{Confidence: 0.9}},
-				{Content: "b", Decoded: true, Detection: qrdet.Detection{Confidence: 0.6}},
+				{Content: "a", Decoded: true, Detection: det(0.8, boxA)},
+				{Decoded: false, Detection: det(0.5, boxA)},
+				{Content: "a", Decoded: true, Detection: det(0.9, boxA2)},
+				{Content: "b", Decoded: true, Detection: det(0.6, boxB)},
 			},
-			3, // "a" deduped to 1, undecoded kept, "b" kept
+			3, // "a" merged to 1, undecoded kept, "b" kept
 		},
 	}
 
@@ -340,10 +348,11 @@ func TestDeduplicateResults(t *testing.T) {
 }
 
 func TestDeduplicateResults_KeepsHigherConfidence(t *testing.T) {
+	box := [4]float32{10, 10, 60, 60}
 	results := []QRResult{
-		{Content: "test", Decoded: true, Detection: qrdet.Detection{Confidence: 0.5}},
-		{Content: "test", Decoded: true, Detection: qrdet.Detection{Confidence: 0.9}},
-		{Content: "test", Decoded: true, Detection: qrdet.Detection{Confidence: 0.7}},
+		{Content: "test", Decoded: true, Detection: qrdet.Detection{Confidence: 0.5, BBoxXYXY: box}},
+		{Content: "test", Decoded: true, Detection: qrdet.Detection{Confidence: 0.9, BBoxXYXY: box}},
+		{Content: "test", Decoded: true, Detection: qrdet.Detection{Confidence: 0.7, BBoxXYXY: box}},
 	}
 
 	deduped := deduplicateResults(results)
@@ -352,6 +361,26 @@ func TestDeduplicateResults_KeepsHigherConfidence(t *testing.T) {
 	}
 	if deduped[0].Detection.Confidence != 0.9 {
 		t.Errorf("Kept confidence = %v, want 0.9", deduped[0].Detection.Confidence)
+	}
+}
+
+func TestBBoxIoU(t *testing.T) {
+	tests := []struct {
+		name string
+		a, b [4]float32
+		want float32
+	}{
+		{"identical", [4]float32{0, 0, 10, 10}, [4]float32{0, 0, 10, 10}, 1},
+		{"disjoint", [4]float32{0, 0, 10, 10}, [4]float32{20, 20, 30, 30}, 0},
+		{"half overlap", [4]float32{0, 0, 10, 10}, [4]float32{5, 0, 15, 10}, 1.0 / 3.0},
+		{"degenerate", [4]float32{0, 0, 0, 0}, [4]float32{0, 0, 0, 0}, 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := bboxIoU(tt.a, tt.b); got < tt.want-1e-6 || got > tt.want+1e-6 {
+				t.Errorf("bboxIoU = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }
 

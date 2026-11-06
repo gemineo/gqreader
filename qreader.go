@@ -189,33 +189,57 @@ func (q *QReader) retryWithFallbacks(img gocv.Mat, det qrdet.Detection, primary 
 	return primary
 }
 
-// deduplicateResults removes duplicate decoded QR codes.
-// Same content → keep highest confidence detection.
-// Undecoded results are always kept.
+// duplicateIoU is the bounding-box overlap above which two decoded results
+// with the same content are considered the same physical symbol.
+const duplicateIoU = 0.3
+
+// deduplicateResults removes duplicate decoded QR codes: results with the
+// same content whose detections overlap substantially are merged, keeping
+// the highest confidence one. Distinct symbols that happen to encode the same
+// payload (a sheet of identical labels) are all kept, as are undecoded results.
 func deduplicateResults(results []QRResult) []QRResult {
 	if len(results) <= 1 {
 		return results
 	}
 
-	seen := make(map[string]int) // content → index of best result
 	deduped := make([]QRResult, 0, len(results))
-
 	for _, r := range results {
 		if !r.Decoded {
 			deduped = append(deduped, r)
 			continue
 		}
-
-		if idx, ok := seen[r.Content]; ok {
-			// Keep higher confidence
-			if r.Detection.Confidence > deduped[idx].Detection.Confidence {
-				deduped[idx] = r
+		merged := false
+		for i := range deduped {
+			d := &deduped[i]
+			if !d.Decoded || d.Content != r.Content {
+				continue
 			}
-		} else {
-			seen[r.Content] = len(deduped)
+			if bboxIoU(d.Detection.BBox(), r.Detection.BBox()) <= duplicateIoU {
+				continue
+			}
+			if r.Detection.Confidence > d.Detection.Confidence {
+				*d = r
+			}
+			merged = true
+			break
+		}
+		if !merged {
 			deduped = append(deduped, r)
 		}
 	}
-
 	return deduped
+}
+
+// bboxIoU returns the intersection-over-union of two [x1, y1, x2, y2] boxes.
+func bboxIoU(a, b [4]float32) float32 {
+	ix := max(0, min(a[2], b[2])-max(a[0], b[0]))
+	iy := max(0, min(a[3], b[3])-max(a[1], b[1]))
+	inter := ix * iy
+	areaA := max(0, a[2]-a[0]) * max(0, a[3]-a[1])
+	areaB := max(0, b[2]-b[0]) * max(0, b[3]-b[1])
+	union := areaA + areaB - inter
+	if union <= 0 {
+		return 0
+	}
+	return inter / union
 }
